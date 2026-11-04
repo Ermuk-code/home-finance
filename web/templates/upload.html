@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Загрузка файлов — Домашние Финансы{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto">
+    <h1 class="text-2xl font-bold text-slate-800 mb-2">📥 Загрузка выписок и брокерских отчетов</h1>
+    <p class="text-sm text-slate-500 mb-6">
+        Поддерживаются PDF и CSV выписки от <b>СберБанка, Альфа-Банка и Т-Банка</b> (включая накопительные счета), а также брокерские отчеты (CSV, XLSX, PDF).
+    </p>
+
+    <form id="upload-form" class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+        <div>
+            <label class="block text-sm font-medium text-slate-700 mb-2">Выберите файл (.pdf, .csv, .xlsx)</label>
+            <input type="file" name="file" accept=".pdf,.csv,.xlsx,.xls" required class="block w-full text-sm text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100">
+        </div>
+        <button type="submit" id="upload-btn" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg transition">
+            Загрузить и распарсить
+        </button>
+    </form>
+
+    <!-- Блок результата -->
+    <div id="upload-result" class="hidden mt-6 bg-white p-6 rounded-xl shadow-sm border border-emerald-300"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.getElementById('upload-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = document.getElementById('upload-btn');
+        const resBox = document.getElementById('upload-result');
+        btn.disabled = true;
+        btn.innerText = '⏳ Обработка файла...';
+        resBox.classList.add('hidden');
+
+        const formData = new FormData(e.target);
+        try {
+            const resp = await fetch('/api/upload', { method: 'POST', body: formData });
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.detail || 'Ошибка при разборе файла');
+
+            if (data.file_type === 'bank_statement') {
+                resBox.innerHTML = `
+                    <h3 class="text-lg font-bold text-emerald-700 mb-2">✅ Банковская выписка успешно загружена!</h3>
+                    <ul class="text-sm space-y-1 text-slate-700">
+                        <li>🏦 Банк: <b>${data.bank_name}</b></li>
+                        <li>📄 Найдено операций в файле: <b>${data.total_found}</b></li>
+                        <li>➕ Добавлено новых: <b>${data.saved_new}</b> (дубликатов пропущено: ${data.skipped_duplicates})</li>
+                        <li>🏷 Автоматически распределено по категориям: <b>${data.categorized_automatically}</b></li>
+                        <li>❓ Требуют ручной разметки: <b>${data.uncategorized}</b></li>
+                    </ul>
+                    <a href="/transactions?unassigned=1" class="inline-block mt-4 text-sm font-semibold text-emerald-600 hover:underline">Перейти к разметке неизвестных операций →</a>
+                `;
+            } else {
+                resBox.innerHTML = `
+                    <h3 class="text-lg font-bold text-indigo-700 mb-2">📈 Брокерский отчет обработан!</h3>
+                    <ul class="text-sm space-y-1 text-slate-700">
+                        <li>➕ Новых бумаг добавлено: <b>${data.assets_added}</b></li>
+                        <li>🔄 Существующих позиций обновлено: <b>${data.assets_updated}</b></li>
+                        <li>🧾 Тикеры: <code>${data.tickers.join(', ')}</code></li>
+                    </ul>
+                `;
+            }
+            resBox.classList.remove('hidden');
+            showToast('Файл успешно обработан!');
+        } catch (err) {
+            showToast(err.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerText = 'Загрузить и распарсить';
+        }
+    });
+</script>
+{% endblock %}

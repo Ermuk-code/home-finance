@@ -60,7 +60,16 @@ class Asset(Base):
 
     user: Mapped["User"] = relationship(back_populates="assets")
 
+class Deposit(Base):
+    __tablename__ = "deposits"
 
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    bank_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)  # Например: "Накопительный счет" или "Вклад Лучший %"
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    interest_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)  # Процентная ставка, например 18.50
+    end_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)  # Дата закрытия (если срочный вклад)
 class Reminder(Base):
     __tablename__ = "reminders"
 
