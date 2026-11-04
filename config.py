@@ -1,8 +1,10 @@
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     BOT_TOKEN: str
+    ADMIN_TELEGRAM_ID: Optional[int] = None
     
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
