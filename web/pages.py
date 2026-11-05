@@ -16,6 +16,8 @@ from db.models import Asset, Category, Deposit, Reminder, Transaction, User
 from services.analytics import analyze_portfolio
 from services.broker_parser import BrokerReportParser
 from web.auth import get_current_admin
+from services.categorizer import TRANSFER_CATEGORY_NAMES, seed_default_categories
+from db.models import Asset, Category, Deposit, Reminder, Transaction, User, Vacation
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -195,11 +197,18 @@ async def delete_asset(
 async def get_dashboard_stats(
     start_date: Optional[str] = Query(default=None, description="Дата начала YYYY-MM-DD"),
     end_date: Optional[str] = Query(default=None, description="Дата окончания YYYY-MM-DD"),
+    include_transfers: bool = Query(default=False, description="Включать ли категории 12 и 13 в графики"),
     session: AsyncSession = Depends(get_async_session),
 ) -> Dict[str, Any]:
-    stmt = select(Category.name, Transaction.amount, Transaction.bank_name, Transaction.date).outerjoin(
-        Category, Transaction.category_id == Category.id
-    )
+    await seed_default_categories(session)
+
+    stmt = select(
+        Category.name,
+        Category.is_mandatory,
+        Transaction.amount,
+        Transaction.bank_name,
+        Transaction.date,
+    ).outerjoin(Category, Transaction.category_id == Category.id)
 
     if start_date:
         try:
@@ -221,20 +230,38 @@ async def get_dashboard_stats(
 
     rows = (await session.execute(stmt)).all()
 
-    total_income = Decimal("0.00")
-    total_expense = Decimal("0.00")
+    clean_income = Decimal("0.00")
+    clean_expense = Decimal("0.00")
+    total_income_all = Decimal("0.00")
+    total_expense_all = Decimal("0.00")
+    mandatory_expense = Decimal("0.00")
+
     by_category: Dict[str, Decimal] = {}
     by_bank: Dict[str, Decimal] = {}
 
-    for cat_name, amount, bank_name, _ in rows:
+    for cat_name, is_mandatory, amount, bank_name, _ in rows:
+        label = cat_name or "Неразобранное"
+        is_transfer = label in TRANSFER_CATEGORY_NAMES
+
         if amount > 0:
-            total_income += amount
+            total_income_all += amount
+            if not is_transfer:
+                clean_income += amount
         else:
             abs_amt = abs(amount)
-            total_expense += abs_amt
-            label = cat_name or "Неразобранное"
-            by_category[label] = by_category.get(label, Decimal("0.00")) + abs_amt
-            by_bank[bank_name] = by_bank.get(bank_name, Decimal("0.00")) + abs_amt
+            total_expense_all += abs_amt
+            if not is_transfer:
+                clean_expense += abs_amt
+            if is_mandatory:
+                mandatory_expense += abs_amt
+
+            # Графики строятся либо без переводов (по умолчанию), либо с ними при включенном чекбоксе
+            if include_transfers or not is_transfer:
+                by_category[label] = by_category.get(label, Decimal("0.00")) + abs_amt
+                by_bank[bank_name] = by_bank.get(bank_name, Decimal("0.00")) + abs_amt
+
+    # Cash Flow = Чистые доходы - Обязательные платежи (ЖКХ, Связь, Подписки)
+    cash_flow = clean_income - mandatory_expense
 
     uncategorized_count = (
         await session.execute(select(func.count(Transaction.id)).where(Transaction.category_id.is_(None)))
@@ -245,8 +272,9 @@ async def get_dashboard_stats(
     ).scalar() or 0
 
     sorted_cats = sorted(by_category.items(), key=lambda x: x[1], reverse=True)
+    sorted_banks = sorted(by_bank.items(), key=lambda x: x[1], reverse=True)
 
-    # 1. Получаем список вкладов и накопительных счетов
+    # Вклады
     deposits_rows = (await session.execute(select(Deposit).order_by(Deposit.amount.desc()))).scalars().all()
     deposits_list = []
     total_deposits_rub = Decimal("0.00")
@@ -265,7 +293,7 @@ async def get_dashboard_stats(
             }
         )
 
-    # 2. Получаем инвестиционный портфель (Акции и Облигации с котировками MOEX)
+    # Портфель MOEX
     user = await _get_primary_user(session)
     portfolio_raw = await analyze_portfolio(session, user.id)
     portfolio_positions = [
@@ -285,15 +313,18 @@ async def get_dashboard_stats(
     ]
 
     return {
-        "total_income": float(total_income),
-        "total_expense": float(total_expense),
-        "net_balance": float(total_income - total_expense),
+        "clean_income": float(clean_income),
+        "clean_expense": float(clean_expense),
+        "total_income_all": float(total_income_all),
+        "total_expense_all": float(total_expense_all),
+        "mandatory_expense": float(mandatory_expense),
+        "cash_flow": float(cash_flow),
         "uncategorized_count": uncategorized_count,
         "active_reminders_count": active_reminders_count,
         "categories_labels": [k for k, _ in sorted_cats],
         "categories_values": [float(v) for _, v in sorted_cats],
-        "banks_labels": list(by_bank.keys()),
-        "banks_values": [float(v) for v in by_bank.values()],
+        "banks_labels": [k for k, _ in sorted_banks],
+        "banks_values": [float(v) for _, v in sorted_banks],
         "deposits": deposits_list,
         "total_deposits": float(total_deposits_rub),
         "portfolio": {

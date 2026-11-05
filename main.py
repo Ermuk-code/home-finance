@@ -13,6 +13,8 @@ from services.scheduler import setup_scheduler
 from web import auth, pages
 from web.api import reminders, transactions, uploads, users
 from db.base import Base, engine, async_session_maker
+from web.api import reminders, transactions, uploads, users, vacations
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -51,7 +53,7 @@ app.include_router(transactions.router)
 app.include_router(uploads.router)
 app.include_router(users.router)
 app.include_router(reminders.router)
-
+app.include_router(vacations.router)
 # Подключаем HTML-страницы (Jinja2)
 app.include_router(pages.router)
 

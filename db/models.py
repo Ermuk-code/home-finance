@@ -19,6 +19,7 @@ class User(Base):
     transactions: Mapped[List["Transaction"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     assets: Mapped[List["Asset"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     reminders: Mapped[List["Reminder"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    vacations: Mapped[List["Vacation"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class Category(Base):
@@ -28,6 +29,8 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     type: Mapped[str] = mapped_column(String(20), nullable=False)  # 'income' или 'expense'
     keywords: Mapped[List[str]] = mapped_column(ARRAY(String), default=list, server_default="{}")
+    is_mandatory: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    monthly_limit: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
 
     transactions: Mapped[List["Transaction"]] = relationship(back_populates="category")
 
@@ -54,22 +57,13 @@ class Asset(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     ticker: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
-    asset_type: Mapped[str] = mapped_column(String(20), nullable=False)  # 'stock' или 'bond'
+    asset_type: Mapped[str] = mapped_column(String(20), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
     average_buy_price: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="assets")
 
-class Deposit(Base):
-    __tablename__ = "deposits"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    bank_name: Mapped[str] = mapped_column(String(80), nullable=False)
-    title: Mapped[str] = mapped_column(String(120), nullable=False)  # Например: "Накопительный счет" или "Вклад Лучший %"
-    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
-    interest_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)  # Процентная ставка, например 18.50
-    end_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)  # Дата закрытия (если срочный вклад)
 class Reminder(Base):
     __tablename__ = "reminders"
 
@@ -81,3 +75,27 @@ class Reminder(Base):
     is_notified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
 
     user: Mapped["User"] = relationship(back_populates="reminders")
+
+
+class Deposit(Base):
+    __tablename__ = "deposits"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    bank_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    interest_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    end_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Vacation(Base):
+    __tablename__ = "vacations"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    end_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+    user: Mapped["User"] = relationship(back_populates="vacations")
