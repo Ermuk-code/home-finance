@@ -1,0 +1,4 @@
+# Скрипты запускаются в Linux-контейнере: CRLF из Windows ломает `sh`
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf

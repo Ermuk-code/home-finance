@@ -20,9 +20,24 @@ services:
     env_file:
       - .env
     ports:
-      - "127.0.0.1:8000:8000"
+      - "${APP_BIND_IP:-127.0.0.1}:8000:8000"
+    # Код берётся из образа: после git pull нужен `docker compose up -d --build`.
+    # Для разработки с живой подгрузкой кода: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Ежедневный pg_dump в ./backups (хранение BACKUP_KEEP_DAYS дней). Копируйте ./backups за пределы LXC!
+  backup:
+    image: postgres:16-alpine
+    container_name: finance_backup
+    restart: unless-stopped
+    env_file:
+      - .env
     volumes:
-      - .:/app
+      - ./backups:/backups
+      - ./scripts/backup.sh:/backup.sh:ro
+    entrypoint: ["sh", "/backup.sh"]
     depends_on:
       db:
         condition: service_healthy

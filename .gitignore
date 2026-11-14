@@ -20,6 +20,9 @@ docker-compose.override.yml
 
 # База данных PostgreSQL (если поднимаете локально через volume)
 pgdata/
+# Дампы БД (scripts/backup.sh)
+backups/
+.ruff_cache/
 
 # Логи и кэш
 *.log

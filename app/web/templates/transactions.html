@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block title %}Транзакции — Домашние Финансы{% endblock %}
+
+{% block content %}
+<div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+    <div>
+        <h1 class="text-2xl font-bold text-slate-800">🧾 Операции и Самообучение</h1>
+        <p class="text-sm text-slate-500">Измените категорию в списке — парсер автоматически запомнит ключевое слово и обновит похожие записи.</p>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-3">
+        <label class="inline-flex items-center space-x-2 text-sm bg-white px-3 py-2 rounded-lg border border-slate-300 cursor-pointer">
+            <input type="checkbox" id="filter-unassigned" onchange="loadTransactions()" class="rounded text-emerald-600">
+            <span>Только без категории</span>
+        </label>
+        <input type="text" id="filter-search" oninput="loadTransactions()" placeholder="Поиск по описанию..." class="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+    </div>
+</div>
+
+<!-- Ручное добавление: наличные и любые карты -->
+<details class="bg-white rounded-xl shadow-sm border border-slate-200 mb-6" id="manual-details">
+    <summary class="cursor-pointer select-none px-5 py-3 font-semibold text-slate-700 flex items-center justify-between">
+        <span>➕ Добавить операцию вручную (наличные / карта)</span>
+        <span class="text-sm font-medium text-emerald-700">💵 Наличные: <span id="cash-balance">—</span></span>
+    </summary>
+    <form id="manual-form" class="px-5 pb-5 pt-2 grid grid-cols-1 md:grid-cols-6 gap-3 items-end text-sm">
+        <label class="block md:col-span-2">
+            <span class="block text-xs font-semibold text-slate-500 uppercase mb-1">Тип</span>
+            <select name="kind" id="m-kind" class="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white">
+                <option value="expense">🔻 Расход</option>
+                <option value="income">🔺 Доход</option>
+                <option value="withdraw">🏧 Снял наличные с карты</option>
+                <option value="topup">💳 Внёс наличные на карту</option>
+            </select>
+        </label>
+        <label class="block md:col-span-2" id="m-source-wrap">
+            <span class="block text-xs font-semibold text-slate-500 uppercase mb-1">Источник</span>
+            <select name="source" id="m-source" class="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white"></select>
+            <input type="text" id="m-source-other" maxlength="50" placeholder="Название карты / банка" class="hidden w-full mt-2 px-3 py-2 border border-slate-300 rounded-lg">
+        </label>
+        <label class="block">
+            <span class="block text-xs font-semibold text-slate-500 uppercase mb-1">Сумма, ₽</span>
+            <input type="number" step="0.01" min="0.01" name="amount" required class="w-full px-3 py-2 border border-slate-300 rounded-lg">
+        </label>
+        <label class="block">
+            <span class="block text-xs font-semibold text-slate-500 uppercase mb-1">Дата</span>
+            <input type="date" name="date" id="m-date" class="w-full px-3 py-2 border border-slate-300 rounded-lg">
+        </label>
+        <label class="block md:col-span-3">
+            <span class="block text-xs font-semibold text-slate-500 uppercase mb-1">Описание</span>
+            <input type="text" name="description" id="m-description" maxlength="300" placeholder="Например: Продукты на рынке" class="w-full px-3 py-2 border border-slate-300 rounded-lg">
+        </label>
+        <label class="block md:col-span-2" id="m-category-wrap">
+            <span class="block text-xs font-semibold text-slate-500 uppercase mb-1">Категория</span>
+            <select name="category_id" id="m-category" class="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white"></select>
+        </label>
+        <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 rounded-lg transition">Добавить</button>
+    </form>
+</details>
+
+<div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+    <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+            <thead>
+                <tr class="bg-slate-100 text-slate-600 text-xs uppercase border-b border-slate-200">
+                    <th class="py-3 px-4">Дата</th>
+                    <th class="py-3 px-4">Банк</th>
+                    <th class="py-3 px-4">Описание</th>
+                    <th class="py-3 px-4 text-right">Сумма</th>
+                    <th class="py-3 px-4">Категория (Самообучение)</th>
+                    <th class="py-3 px-4 text-center">Удалить</th>
+                </tr>
+            </thead>
+            <tbody id="tx-table-body" class="divide-y divide-slate-200 text-sm"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let categoriesList = [];
+    let CASH_NAME = 'Наличные';
+    const OTHER = '__other__';
+
+    function esc(v) {
+        const d = document.createElement('div');
+        d.textContent = v ?? '';
+        return d.innerHTML;
+    }
+
+    const fmtRub = (n) => `${Number(n).toLocaleString('ru-RU')} ₽`;
+
+    async function loadSources() {
+        const resp = await fetch('/api/transactions/sources');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        CASH_NAME = data.cash;
+        const sel = document.getElementById('m-source');
+        sel.innerHTML = [
+            `<option value="${esc(data.cash)}">💵 ${esc(data.cash)}</option>`,
+            ...data.cards.map(c => `<option value="${esc(c)}">💳 ${esc(c)}</option>`),
+            `<option value="${OTHER}">➕ Другая карта / банк…</option>`
+        ].join('');
+        document.getElementById('cash-balance').innerText = fmtRub(data.cash_balance);
+    }
+
+    function refreshManualForm() {
+        const kind = document.getElementById('m-kind').value;
+        const isTransfer = kind === 'withdraw' || kind === 'topup';
+        document.getElementById('m-source-wrap').classList.toggle('hidden', isTransfer);
+        document.getElementById('m-category-wrap').classList.toggle('hidden', isTransfer);
+        document.getElementById('m-description').placeholder = isTransfer
+            ? 'Необязательно (для начального остатка: «Начальный остаток»)'
+            : 'Например: Продукты на рынке';
+
+        const catSel = document.getElementById('m-category');
+        catSel.innerHTML = `<option value="">Определить по описанию</option>` + categoriesList
+            .filter(c => c.type === kind)
+            .map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+        document.getElementById('m-source-other').classList.toggle(
+            'hidden', isTransfer || document.getElementById('m-source').value !== OTHER);
+    }
+
+    document.getElementById('m-kind').addEventListener('change', refreshManualForm);
+    document.getElementById('m-source').addEventListener('change', refreshManualForm);
+
+    document.getElementById('manual-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const kind = fd.get('kind');
+        let source = fd.get('source');
+        if (source === OTHER) source = document.getElementById('m-source-other').value.trim();
+
+        const payload = {
+            kind,
+            amount: Number(fd.get('amount')),
+            source,
+            description: fd.get('description') || null,
+            date: fd.get('date') || null,
+            category_id: fd.get('category_id') ? Number(fd.get('category_id')) : null,
+        };
+        const resp = await fetch('/api/transactions/manual', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            showToast(data.detail || 'Ошибка сохранения', 'error');
+            return;
+        }
+        showToast(`Добавлено${data.category_name ? ' · ' + data.category_name : ''}. Наличные: ${fmtRub(data.cash_balance)}`);
+        e.target.querySelector('[name=amount]').value = '';
+        document.getElementById('m-description').value = '';
+        document.getElementById('cash-balance').innerText = fmtRub(data.cash_balance);
+        loadSources();
+        loadTransactions();
+    });
+
+    async function initPage() {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('unassigned') === '1') {
+            document.getElementById('filter-unassigned').checked = true;
+        }
+        const catResp = await fetch('/api/transactions/categories');
+        if (catResp.ok) {
+            categoriesList = await catResp.json();
+        }
+        document.getElementById('m-date').value = new Date().toLocaleDateString('sv-SE');
+        await loadSources();
+        refreshManualForm();
+        await loadTransactions();
+    }
+
+    async function loadTransactions() {
+        const unassigned = document.getElementById('filter-unassigned').checked;
+        const search = document.getElementById('filter-search').value.trim();
+
+        const params = new URLSearchParams({ limit: 150 });
+        if (unassigned) params.append('unassigned_only', 'true');
+        if (search) params.append('search', search);
+
+        try {
+            const resp = await fetch(`/api/transactions?${params.toString()}`);
+            if (!resp.ok) throw new Error('Не удалось загрузить транзакции');
+            const data = await resp.json();
+            renderTable(data.items);
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    function renderTable(items) {
+        const tbody = document.getElementById('tx-table-body');
+        tbody.innerHTML = '';
+
+        if (!items.length) {
+            tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-400">Операции не найдены</td></tr>`;
+            return;
+        }
+
+        for (const tx of items) {
+            const tr = document.createElement('tr');
+            tr.className = 'hover:bg-slate-50 transition';
+
+            const dt = new Date(tx.date).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const amtColor = tx.amount >= 0 ? 'text-emerald-600 font-semibold' : 'text-slate-800 font-medium';
+            const amtSign = tx.amount > 0 ? '+' : '';
+
+            const optionsHtml = [
+                `<option value="">— Не выбрана —</option>`,
+                ...categoriesList.map(c => `<option value="${c.id}" ${c.id === tx.category_id ? 'selected' : ''}>${c.type === 'income' ? '🟢' : '🔴'} ${esc(c.name)}</option>`)
+            ].join('');
+
+            tr.innerHTML = `
+                <td class="py-3 px-4 whitespace-nowrap text-slate-500">${dt}</td>
+                <td class="py-3 px-4 whitespace-nowrap"><span class="px-2 py-1 ${tx.bank_name === CASH_NAME ? 'bg-amber-100 text-amber-800' : 'bg-slate-100'} rounded text-xs font-medium">${esc(tx.bank_name)}</span></td>
+                <td class="py-3 px-4 max-w-md truncate" title="${esc(tx.description)}">${esc(tx.description)}</td>
+                <td class="py-3 px-4 whitespace-nowrap text-right ${amtColor}">${amtSign}${tx.amount.toLocaleString('ru-RU')} ₽</td>
+                <td class="py-3 px-4">
+                    <select onchange="changeCategory(${tx.id}, this.value)" class="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white w-full max-w-xs">
+                        ${optionsHtml}
+                    </select>
+                </td>
+                <td class="py-3 px-4 text-center">
+                    <button onclick="deleteTx(${tx.id})" class="text-rose-500 hover:text-rose-700 text-xs font-medium">✕</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        }
+    }
+
+    async function changeCategory(txId, newCategoryId) {
+        if (!newCategoryId) return;
+        try {
+            const resp = await fetch(`/api/transactions/${txId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ category_id: parseInt(newCategoryId), learn: true })
+            });
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.detail || 'Ошибка сохранения');
+
+            const d = data.details;
+            showToast(`Категория: «${d.new_category_name}» | Запомнено: "${d.learned_keyword}" | Обновлено похожих: ${d.similar_transactions_updated}`);
+            await loadTransactions();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    async function deleteTx(txId) {
+        if (!confirm('Удалить эту операцию?')) return;
+        const resp = await fetch(`/api/transactions/${txId}`, { method: 'DELETE' });
+        if (resp.ok) {
+            showToast('Операция удалена');
+            loadTransactions();
+        }
+    }
+
+    initPage();
+</script>
+{% endblock %}

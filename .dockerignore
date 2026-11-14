@@ -1,0 +1,37 @@
+# Секреты: .env передаётся в контейнер через env_file, в образ он попадать не должен
+.env
+.env.*
+!.env.example
+
+.git
+.github
+.gitignore
+.dockerignore
+.claude
+
+# Python-мусор и окружения
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Не нужно для работы приложения
+tests/
+docs/
+homeassistant/
+temp/
+backups/
+*.md
+LICENSE
+docker-compose*.yml
+Dockerfile
+requirements-dev.txt
+
+# Пользовательские файлы
+*.pdf
+*.csv
+*.xlsx

@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Календарь напоминаний — Домашние Финансы{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Форма создания -->
+    <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit">
+        <h2 class="text-lg font-bold text-slate-800 mb-4">🔔 Новое напоминание</h2>
+        <form id="reminder-form" class="space-y-4">
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Заголовок события</label>
+                <input type="text" name="title" placeholder="Например: Закрытие вклада в Т-Банке" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+            </div>
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Описание / Заметка</label>
+                <textarea name="description" rows="2" placeholder="Перевести деньги на накопительный счет под 18%" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"></textarea>
+            </div>
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Дата и время уведомления</label>
+                <input type="datetime-local" name="trigger_date" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+            </div>
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Повторять</label>
+                <select name="recurrence" id="recurrence-select" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+                    <option value="">Не повторять</option>
+                    <option value="daily">Каждый день</option>
+                    <option value="weekly" id="opt-weekly">Каждую неделю</option>
+                    <option value="monthly" id="opt-monthly">Каждый месяц</option>
+                    <option value="yearly" id="opt-yearly">Каждый год</option>
+                </select>
+                <div id="every-row" class="hidden mt-2 flex items-center gap-2 text-sm text-slate-600">
+                    <span>Каждые</span>
+                    <input type="number" name="recurrence_every" id="every-input" min="1" max="365" value="1" class="w-20 px-2 py-1.5 border border-slate-300 rounded-lg text-sm">
+                    <span id="every-unit">дней</span>
+                </div>
+                <p class="text-[11px] text-slate-400 mt-1">День недели и число берутся из выбранной даты. Хотите «каждый вторник» — выберите любой вторник и «Каждую неделю».</p>
+            </div>
+            <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-lg text-sm transition">
+                Добавить в календарь
+            </button>
+        </form>
+    </div>
+
+    <!-- Список напоминаний -->
+    <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 class="text-lg font-bold text-slate-800 mb-4">📅 Запланированные уведомления в Telegram</h2>
+        <div id="reminders-list" class="space-y-3"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    async function loadReminders() {
+        const resp = await fetch('/api/reminders');
+        if (!resp.ok) return;
+        const items = await resp.json();
+        const container = document.getElementById('reminders-list');
+        container.innerHTML = '';
+
+        if (!items.length) {
+            container.innerHTML = `<p class="text-sm text-slate-400 py-6 text-center">Напоминаний пока нет.</p>`;
+            return;
+        }
+
+        for (const r of items) {
+            const dt = new Date(r.trigger_date).toLocaleString('ru-RU');
+            const repeatBadge = r.recurrence
+                ? `<span class="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-xs font-medium">🔁 ${r.recurrence_label}</span>`
+                : '';
+            const badge = r.is_notified
+                ? `<span class="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs font-medium">✓ Отправлено в TG</span>`
+                : `<span class="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs font-medium">⏳ Ожидает</span>`;
+
+            const div = document.createElement('div');
+            div.className = 'flex items-center justify-between p-4 border border-slate-200 rounded-lg';
+            div.innerHTML = `
+                <div>
+                    <div class="flex items-center space-x-2">
+                        <span class="font-semibold text-slate-800">${escapeHtml(r.title)}</span>
+                        ${badge}
+                        ${repeatBadge}
+                    </div>
+                    ${r.description ? `<p class="text-xs text-slate-500 mt-1">${escapeHtml(r.description)}</p>` : ''}
+                    <p class="text-xs text-slate-400 mt-1">Срабатывание: ${escapeHtml(dt)} (TG ID: ${escapeHtml(r.telegram_id)})</p>
+                </div>
+                <button onclick="deleteReminder(${r.id})" class="text-rose-500 hover:text-rose-700 text-xs font-medium">Удалить</button>
+            `;
+            container.appendChild(div);
+        }
+    }
+
+    document.getElementById('reminder-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const payload = {
+            title: fd.get('title'),
+            description: fd.get('description'),
+            trigger_date: new Date(fd.get('trigger_date')).toISOString(),
+            recurrence: fd.get('recurrence') || null,
+            recurrence_every: parseInt(fd.get('recurrence_every')) || 1
+        };
+        const resp = await fetch('/api/reminders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (resp.ok) {
+            e.target.reset();
+            showToast('Напоминание запланировано!');
+            loadReminders();
+        } else {
+            const err = await resp.json();
+            showToast(err.detail || 'Ошибка создания', 'error');
+        }
+    });
+
+    async function deleteReminder(id) {
+        const resp = await fetch(`/api/reminders/${id}`, { method: 'DELETE' });
+        if (resp.ok) {
+            showToast('Удалено');
+            loadReminders();
+        }
+    }
+
+    // Подсказки в списке «Повторять» подстраиваются под выбранную дату: «Каждый вторник», «Каждый месяц, 15-го числа»
+    const WEEKDAYS = ['каждое воскресенье', 'каждый понедельник', 'каждый вторник', 'каждую среду', 'каждый четверг', 'каждую пятницу', 'каждую субботу'];
+    document.querySelector('input[name="trigger_date"]').addEventListener('input', (e) => {
+        const d = new Date(e.target.value);
+        if (isNaN(d)) return;
+        const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+        document.getElementById('opt-weekly').textContent = cap(WEEKDAYS[d.getDay()]);
+        document.getElementById('opt-monthly').textContent = `Каждый месяц, ${d.getDate()}-го числа`;
+        document.getElementById('opt-yearly').textContent = `Каждый год, ${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`;
+    });
+
+    // Произвольный интервал: «каждые N дней / недель / месяцев / лет»
+    const UNITS = {
+        daily: ['день', 'дня', 'дней'], weekly: ['неделю', 'недели', 'недель'],
+        monthly: ['месяц', 'месяца', 'месяцев'], yearly: ['год', 'года', 'лет'],
+    };
+    function plural(n, forms) {
+        const a = n % 100, b = n % 10;
+        if (a >= 11 && a <= 14) return forms[2];
+        return b === 1 ? forms[0] : (b >= 2 && b <= 4 ? forms[1] : forms[2]);
+    }
+    function refreshEvery() {
+        const rule = document.getElementById('recurrence-select').value;
+        document.getElementById('every-row').classList.toggle('hidden', !rule);
+        if (!rule) return;
+        const n = Math.max(1, parseInt(document.getElementById('every-input').value) || 1);
+        document.getElementById('every-unit').textContent = plural(n, UNITS[rule]);
+    }
+    document.getElementById('recurrence-select').addEventListener('change', refreshEvery);
+    document.getElementById('every-input').addEventListener('input', refreshEvery);
+    document.getElementById('reminder-form').addEventListener('reset', () => setTimeout(refreshEvery, 0));
+
+    loadReminders();
+</script>
+{% endblock %}

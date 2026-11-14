@@ -1,0 +1,11 @@
+# Добавьте в configuration.yaml (или подключите через `rest_command: !include rest_command.yaml`)
+# Токен храните в secrets.yaml:  life_os_webhook_token: "<HEALTH_WEBHOOK_TOKEN из .env>"
+rest_command:
+  send_weight_to_life_os:
+    url: "http://<IP_КОНТЕЙНЕРА>:8000/api/health/webhook/weight"
+    method: POST
+    timeout: 10
+    headers:
+      content-type: "application/json"
+      x-webhook-token: !secret life_os_webhook_token
+    payload: '{"profile_alias": "{{ profile }}", "weight_kg": {{ weight }}}'

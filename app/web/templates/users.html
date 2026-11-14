@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Доступ Telegram — Домашние Финансы{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto">
+    <h1 class="text-2xl font-bold text-slate-800 mb-2">🛡 Белый список Telegram-аккаунтов</h1>
+    <p class="text-sm text-slate-500 mb-6">Только пользователи из этого списка могут взаимодействовать с вашим Telegram-ботом.</p>
+
+    <form id="add-user-form" class="flex flex-wrap gap-3 mb-6">
+        <input type="number" name="telegram_id" placeholder="Telegram ID (например, 123456789)" required class="flex-grow px-4 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+        <input type="text" name="name" placeholder="Имя" required maxlength="100" class="w-40 px-4 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+        <select name="role" class="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+            <option value="user">user — только свои данные</option>
+            <option value="admin">admin — видит всё</option>
+        </select>
+        <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-lg text-sm font-semibold transition">
+            + Разрешить доступ
+        </button>
+    </form>
+
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <table class="w-full text-left border-collapse text-sm">
+            <thead>
+                <tr class="bg-slate-100 text-slate-600 text-xs uppercase border-b border-slate-200">
+                    <th class="py-3 px-4">ID в БД</th>
+                    <th class="py-3 px-4">Имя</th>
+                    <th class="py-3 px-4">Telegram ID</th>
+                    <th class="py-3 px-4">Роль</th>
+                    <th class="py-3 px-4">Операций</th>
+                    <th class="py-3 px-4 text-right">Действие</th>
+                </tr>
+            </thead>
+            <tbody id="users-tbody" class="divide-y divide-slate-200"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function esc(v) {
+        return String(v).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+    }
+
+    async function loadUsers() {
+        const resp = await fetch('/api/users');
+        if (!resp.ok) return;
+        const users = await resp.json();
+        const tbody = document.getElementById('users-tbody');
+        tbody.innerHTML = '';
+
+        for (const u of users) {
+            const roleBadge = u.role === 'admin'
+                ? `<span class="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-xs font-semibold">admin${u.is_owner ? ' (владелец)' : ''}</span>`
+                : `<span class="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs">user</span>`;
+
+            const delBtn = u.is_owner
+                ? `<span class="text-xs text-slate-400">Защищен</span>`
+                : `<button onclick="removeUser(${u.id})" class="text-rose-600 hover:underline text-xs font-medium">Отозвать доступ</button>`;
+
+            tbody.innerHTML += `
+                <tr>
+                    <td class="py-3 px-4 text-slate-500">#${u.id}</td>
+                    <td class="py-3 px-4 font-medium">${esc(u.name)}</td>
+                    <td class="py-3 px-4 font-mono font-semibold">${u.telegram_id}</td>
+                    <td class="py-3 px-4">${roleBadge}</td>
+                    <td class="py-3 px-4">${u.transactions_count}</td>
+                    <td class="py-3 px-4 text-right">${delBtn}</td>
+                </tr>
+            `;
+        }
+    }
+
+    document.getElementById('add-user-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const resp = await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                telegram_id: parseInt(fd.get('telegram_id')),
+                name: fd.get('name'),
+                role: fd.get('role')
+            })
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+            e.target.reset();
+            showToast(`Telegram ID ${data.telegram_id} добавлен в белый список!`);
+            loadUsers();
+        } else {
+            showToast(data.detail || 'Ошибка добавления', 'error');
+        }
+    });
+
+    async function removeUser(id) {
+        if (!confirm('Отозвать доступ у этого аккаунта?')) return;
+        const resp = await fetch(`/api/users/${id}`, { method: 'DELETE' });
+        if (resp.ok) {
+            showToast('Доступ отозван');
+            loadUsers();
+        }
+    }
+
+    loadUsers();
+</script>
+{% endblock %}

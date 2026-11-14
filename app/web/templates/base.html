@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Домашние Финансы{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+
+    <!-- Навигационная панель -->
+    <nav class="bg-slate-900 text-white shadow-md">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16 items-center">
+                <div class="flex items-center space-x-6">
+                    <a href="/" class="text-lg font-bold tracking-tight text-emerald-400">💰 Life OS</a>
+                    <div class="hidden md:flex space-x-2">
+                        <a href="/" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'dashboard' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Дашборд</a>
+                        <a href="/transactions" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'transactions' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Транзакции</a>
+                        <a href="/income" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'income' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Доходы</a>
+                        <a href="/upload" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'upload' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Загрузка файлов</a>
+                        <a href="/reminders" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'reminders' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Календарь</a>
+                        <a href="/limits" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'limits' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Лимиты</a>
+                        {% if current_user and current_user.role == 'admin' %}
+                        <a href="/users" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'users' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Доступ (TG)</a>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="flex items-center space-x-3">
+                    {% if current_user %}
+                    <span class="text-sm text-slate-300">{{ current_user.name }}
+                        <span class="ml-1 px-1.5 py-0.5 rounded text-xs {% if current_user.role == 'admin' %}bg-indigo-500/20 text-indigo-300{% else %}bg-emerald-500/20 text-emerald-300{% endif %}">{{ current_user.role }}</span>
+                    </span>
+                    {% endif %}
+                    <button onclick="logout()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-md text-sm font-medium transition">
+                        Выход
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Контейнер для всплывающих уведомлений (Toast) -->
+    <div id="toast-container" class="fixed bottom-5 right-5 z-50 space-y-2"></div>
+
+    <!-- Основной контент страницы -->
+    <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {% block content %}{% endblock %}
+    </main>
+
+    <script>
+        // Экранирование для вставки данных в innerHTML / шаблонные строки. Любые данные из API
+        // (названия, описания, тикеры) вставлять только через escapeHtml.
+        function escapeHtml(v) {
+            return String(v ?? '').replace(/[&<>"']/g, ch => (
+                { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
+            ));
+        }
+        // Значение как JS-литерал внутри HTML-атрибута: onclick="fn(${jsArg(x)})"
+        const jsArg = (v) => escapeHtml(JSON.stringify(v));
+
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            const bg = type === 'error' ? 'bg-rose-600' : 'bg-emerald-600';
+            toast.className = `${bg} text-white px-4 py-3 rounded-lg shadow-lg text-sm font-medium transition-opacity duration-300 max-w-md`;
+            toast.innerText = message;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 300);
+            }, 4000);
+        }
+
+        async function logout() {
+            await fetch('/api/logout', { method: 'POST' });
+            window.location.href = '/login';
+        }
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

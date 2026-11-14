@@ -1,0 +1,29 @@
+# Фрагмент для вашей существующей автоматизации маршрутизации веса.
+# Добавьте шаги rest_command ПОСЛЕ input_number.set_value в каждой ветке choose.
+# Имена триггера, сущностей и диапазоны замените на свои.
+action:
+  - choose:
+      # --- Вы (admin) ---
+      - conditions:
+          - condition: template
+            value_template: "{{ 70 <= trigger.to_state.state | float(0) <= 90 }}"
+        sequence:
+          - service: input_number.set_value
+            target: { entity_id: input_number.weight_admin }
+            data: { value: "{{ trigger.to_state.state | float }}" }
+          - service: rest_command.send_weight_to_life_os
+            data:
+              profile: admin
+              weight: "{{ trigger.to_state.state | float }}"
+      # --- Девушка (user) ---
+      - conditions:
+          - condition: template
+            value_template: "{{ 45 <= trigger.to_state.state | float(0) < 70 }}"
+        sequence:
+          - service: input_number.set_value
+            target: { entity_id: input_number.weight_user }
+            data: { value: "{{ trigger.to_state.state | float }}" }
+          - service: rest_command.send_weight_to_life_os
+            data:
+              profile: user
+              weight: "{{ trigger.to_state.state | float }}"

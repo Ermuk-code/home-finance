@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Бюджетные лимиты — Домашние Финансы{% endblock %}
+
+{% block content %}
+<div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+    <h2 class="text-lg font-bold text-slate-800 mb-1">🎯 Месячные лимиты по категориям</h2>
+    <p class="text-sm text-slate-500 mb-4">
+        Бот предупредит после загрузки выписки, когда траты в категории дойдут до 80% лимита, и ещё раз — при 100%.
+        Пустое поле — лимит не задан. Лимит действует на категорию для всех пользователей.
+    </p>
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="text-left text-xs uppercase text-slate-500 border-b border-slate-200">
+                    <th class="py-2 pr-4">Категория</th>
+                    <th class="py-2 pr-4">Потрачено в этом месяце</th>
+                    <th class="py-2 pr-4">Лимит, ₽</th>
+                    <th class="py-2"></th>
+                </tr>
+            </thead>
+            <tbody id="limits-body"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const fmt = (n) => Number(n).toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+
+    function esc(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
+    function progress(r) {
+        if (r.percent === null) return '';
+        const color = r.percent >= 100 ? 'bg-rose-500' : (r.percent >= 80 ? 'bg-amber-400' : 'bg-emerald-500');
+        return `<div class="w-40 h-1.5 bg-slate-100 rounded mt-1"><div class="${color} h-1.5 rounded" style="width:${Math.min(r.percent, 100)}%"></div></div>
+                <span class="text-xs text-slate-500">${r.percent}% лимита</span>`;
+    }
+
+    async function loadLimits() {
+        const resp = await fetch('/api/limits');
+        if (!resp.ok) return;
+        const rows = await resp.json();
+        const body = document.getElementById('limits-body');
+        body.innerHTML = '';
+        for (const r of rows) {
+            const tr = document.createElement('tr');
+            tr.className = 'border-b border-slate-100';
+            tr.innerHTML = `
+                <td class="py-3 pr-4">${esc(r.name)}${r.is_mandatory ? ' <span class="text-xs text-slate-400">(обязательная)</span>' : ''}</td>
+                <td class="py-3 pr-4">${fmt(r.spent)} ₽${progress(r)}</td>
+                <td class="py-3 pr-4"><input id="limit-${r.id}" type="number" min="0" step="100" value="${r.monthly_limit ?? ''}" placeholder="не задан" class="w-36 px-3 py-1.5 border border-slate-300 rounded-lg text-sm"></td>
+                <td class="py-3"><button onclick="saveLimit(${r.id})" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-3 py-1.5 rounded-lg text-xs transition">Сохранить</button></td>`;
+            body.appendChild(tr);
+        }
+    }
+
+    async function saveLimit(id) {
+        const raw = document.getElementById(`limit-${id}`).value;
+        const resp = await fetch(`/api/limits/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ monthly_limit: raw === '' ? null : Number(raw) })
+        });
+        if (resp.ok) {
+            showToast(raw === '' || Number(raw) === 0 ? 'Лимит снят' : 'Лимит сохранён');
+            loadLimits();
+        } else {
+            const err = await resp.json();
+            showToast(err.detail || 'Ошибка сохранения', 'error');
+        }
+    }
+
+    loadLimits();
+</script>
+{% endblock %}

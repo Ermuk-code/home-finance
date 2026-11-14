@@ -1,0 +1,6 @@
+# Режим разработки: код монтируется с хоста, правки видны после `docker compose restart app`.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+services:
+  app:
+    volumes:
+      - .:/app

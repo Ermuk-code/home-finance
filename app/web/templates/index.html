@@ -1,0 +1,760 @@
+{% extends "base.html" %}
+{% block title %}Дашборд — Домашние Финансы{% endblock %}
+
+{% block content %}
+<!-- Шапка, Гибридный селектор периода (1С) и чекбокс переводов -->
+<div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6">
+    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div>
+            <h1 class="text-xl font-bold text-slate-800">📊 Финансовый дашборд</h1>
+            <p id="period-label" class="text-xs text-slate-500 mt-0.5">Период: За всё время</p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+            <div class="inline-flex rounded-lg border border-slate-300 bg-slate-50 p-0.5 text-xs font-medium">
+                <button type="button" onclick="setMode('month')" id="btn-mode-month" class="px-3 py-1.5 rounded-md transition">Месяц</button>
+                <button type="button" onclick="setMode('quarter')" id="btn-mode-quarter" class="px-3 py-1.5 rounded-md transition">Квартал</button>
+                <button type="button" onclick="setMode('year')" id="btn-mode-year" class="px-3 py-1.5 rounded-md transition">Год</button>
+                <button type="button" onclick="setMode('all')" id="btn-mode-all" class="px-3 py-1.5 rounded-md transition">Всё время</button>
+            </div>
+
+            <div id="step-nav" class="inline-flex items-center space-x-1">
+                <button type="button" onclick="shiftPeriod(-1)" class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-bold" title="Предыдущий период">◀</button>
+                <button type="button" onclick="shiftPeriod(1)" class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-bold" title="Следующий период">▶</button>
+            </div>
+
+            <div class="flex items-center space-x-1.5 text-xs">
+                <span class="text-slate-500">С:</span>
+                <input type="date" id="date-start" onchange="onCustomDateChange()" class="border border-slate-300 rounded-lg px-2 py-1 bg-white">
+                <span class="text-slate-500">По:</span>
+                <input type="date" id="date-end" onchange="onCustomDateChange()" class="border border-slate-300 rounded-lg px-2 py-1 bg-white">
+            </div>
+
+            <!-- Переключатель учета переводов в графиках -->
+            <label class="inline-flex items-center space-x-1.5 text-xs bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-300 cursor-pointer">
+                <input type="checkbox" id="toggle-transfers" onchange="loadDashboard()" class="rounded text-emerald-600">
+                <span class="text-slate-700 font-medium">🔄 Учитывать переводы в графиках</span>
+            </label>
+        </div>
+    </div>
+</div>
+
+<!-- Верхние карточки сводки + Крупная карточка Cash Flow -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 mb-6">
+    <!-- Крупная карточка Cash Flow (занимает 2 колонки на широких экранах) -->
+    <div class="sm:col-span-2 bg-gradient-to-br from-emerald-600 to-teal-700 text-white p-5 rounded-xl shadow-md">
+        <p class="text-xs font-semibold uppercase tracking-wider text-emerald-100">Свободный денежный поток (доход − расход)</p>
+        <p id="stat-cashflow" class="text-2xl font-extrabold mt-1">0 ₽</p>
+        <p id="stat-mandatory" class="text-[11px] text-emerald-100 mt-1.5">Доходы 0 ₽ − расходы 0 ₽</p>
+    </div>
+
+    <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <p class="text-xs font-semibold text-slate-400 uppercase">Чистые доходы</p>
+        <p id="stat-income" class="text-xl font-bold text-emerald-600 mt-1">+0 ₽</p>
+        <p id="stat-income-all" class="text-[11px] text-slate-400 mt-1">С переводами: +0 ₽</p>
+    </div>
+
+    <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <p class="text-xs font-semibold text-slate-400 uppercase">Чистые расходы</p>
+        <p id="stat-expense" class="text-xl font-bold text-rose-600 mt-1">-0 ₽</p>
+        <p id="stat-expense-all" class="text-[11px] text-slate-400 mt-1">С переводами: -0 ₽</p>
+    </div>
+
+    <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <p class="text-xs font-semibold text-slate-400 uppercase">Вклады / MOEX / Наличные</p>
+        <p id="stat-deposits" class="text-base font-bold text-blue-600 mt-1">Вклады: 0 ₽</p>
+        <p id="stat-portfolio" class="text-xs font-semibold text-indigo-600 mt-1">Портфель: 0 ₽</p>
+        <p id="stat-cash" class="text-xs font-semibold text-amber-600 mt-1">Наличные: 0 ₽</p>
+    </div>
+
+    <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <p class="text-xs font-semibold text-slate-400 uppercase">Неразобранные</p>
+        <div class="flex items-center justify-between mt-1">
+            <p id="stat-uncat" class="text-xl font-bold text-amber-500">0</p>
+            <a href="/transactions?unassigned=1" class="text-xs text-emerald-600 hover:underline font-medium">Разобрать →</a>
+        </div>
+    </div>
+</div>
+
+<!-- Графики доходов и расходов -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+    <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 class="text-base font-semibold text-slate-700 mb-4">Структура расходов по категориям</h2>
+        <div class="h-64 flex items-center justify-center">
+            <canvas id="categoriesChart"></canvas>
+        </div>
+    </div>
+    <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 class="text-base font-semibold text-slate-700 mb-4">Расходы по банкам и счетам</h2>
+        <div class="h-64 flex items-center justify-center">
+            <canvas id="banksChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- БЛОК ОТПУСКОВ (Проектное бюджетирование) -->
+<div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-8">
+    <div class="mb-4">
+        <h2 class="text-lg font-bold text-slate-800">✈️ Проектное бюджетирование: Отпуска и поездки</h2>
+        <p class="text-xs text-slate-500">Все повседневные траты внутри указанных дат автоматически относятся к категории «Путешествия» (кроме ЖКХ, Связи, Подписок и переводов).</p>
+    </div>
+
+    <form id="add-vacation-form" class="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-teal-50/60 p-3.5 rounded-lg border border-teal-200 mb-4 text-xs">
+        <input type="text" name="name" placeholder="Название поездки (например: Сочи Осень)" required class="px-3 py-2 border border-slate-300 rounded-md bg-white">
+        <div class="flex items-center space-x-2">
+            <span class="text-slate-500 whitespace-nowrap">Начало:</span>
+            <input type="date" name="start_date" required class="w-full px-2 py-2 border border-slate-300 rounded-md bg-white">
+        </div>
+        <div class="flex items-center space-x-2">
+            <span class="text-slate-500 whitespace-nowrap">Конец:</span>
+            <input type="date" name="end_date" required class="w-full px-2 py-2 border border-slate-300 rounded-md bg-white">
+        </div>
+        <button type="submit" class="bg-teal-600 hover:bg-teal-700 text-white font-semibold px-4 py-2 rounded-md transition">+ Добавить отпуск</button>
+    </form>
+
+    <div id="vacations-list" class="flex flex-wrap gap-2"></div>
+</div>
+
+<!-- ОКНО 1: АКТУАЛЬНЫЕ ВКЛАДЫ И НАКОПИТЕЛЬНЫЕ СЧЕТА -->
+<div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-8">
+    <div class="mb-4">
+        <h2 class="text-lg font-bold text-slate-800">🏦 Мои вклады и накопительные счета</h2>
+        <p class="text-xs text-slate-500">Вклад — фиксированная сумма на срок. Накопительный счёт — можно пополнять и снимать, проценты считаются ежедневно, зачисляются 12-го числа каждого месяца.</p>
+    </div>
+
+    <form id="add-deposit-form" class="bg-slate-50 p-3.5 rounded-lg border border-slate-200 mb-4 text-xs space-y-3">
+        <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <span class="font-semibold text-slate-600">Тип:</span>
+            <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" name="kind" value="deposit" checked>
+                <span class="font-medium">Вклад</span>
+                <span class="text-slate-400">срок, без пополнения и снятия</span>
+            </label>
+            <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" name="kind" value="savings">
+                <span class="font-medium">Накопительный счёт</span>
+                <span class="text-slate-400">можно пополнять и снимать</span>
+            </label>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <input type="text" name="bank_name" placeholder="Банк (Сбер, Т-Банк, Альфа)" required class="px-3 py-2 border border-slate-300 rounded-md bg-white">
+            <input type="text" name="title" placeholder="Название (например, «Весенний»)" required class="px-3 py-2 border border-slate-300 rounded-md bg-white">
+            <input type="number" step="0.01" min="0.01" name="amount" id="dep-amount" placeholder="Сумма (₽)" required class="px-3 py-2 border border-slate-300 rounded-md bg-white">
+            <input type="number" step="0.01" min="0" max="100" name="interest_rate" placeholder="Ставка (% годовых)" required class="px-3 py-2 border border-slate-300 rounded-md bg-white">
+        </div>
+
+        <!-- Поля только для срочного вклада -->
+        <div id="deposit-term-fields" class="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+            <label class="block">
+                <span class="block text-slate-500 mb-1">Дата открытия</span>
+                <input type="date" name="opened_at" class="w-full px-2 py-2 border border-slate-300 rounded-md bg-white">
+            </label>
+            <label class="block">
+                <span class="block text-slate-500 mb-1">Срок (месяцев)</span>
+                <input type="number" step="1" min="1" max="120" name="term_months" placeholder="Например, 6 или 12" class="w-full px-3 py-2 border border-slate-300 rounded-md bg-white">
+            </label>
+            <label class="inline-flex items-center gap-2 cursor-pointer pb-2">
+                <input type="checkbox" name="capitalization">
+                <span class="text-slate-600">Капитализация процентов ежемесячно</span>
+            </label>
+            <div id="deposit-preview" class="text-slate-500 pb-2"></div>
+        </div>
+
+        <div class="flex items-center justify-between gap-3">
+            <p id="deposit-form-hint" class="text-slate-400"></p>
+            <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-md whitespace-nowrap transition">+ Добавить</button>
+        </div>
+    </form>
+
+    <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse text-sm">
+            <thead>
+                <tr class="bg-slate-100 text-slate-600 text-xs uppercase border-b border-slate-200">
+                    <th class="py-2.5 px-4">Банк</th>
+                    <th class="py-2.5 px-4">Продукт</th>
+                    <th class="py-2.5 px-4 text-right">Сумма</th>
+                    <th class="py-2.5 px-4 text-right">Ставка</th>
+                    <th class="py-2.5 px-4">Срок</th>
+                    <th class="py-2.5 px-4 text-right">Доход</th>
+                    <th class="py-2.5 px-4 text-right">К получению</th>
+                    <th class="py-2.5 px-4 text-center">Действия</th>
+                </tr>
+            </thead>
+            <tbody id="deposits-tbody" class="divide-y divide-slate-200"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ОКНО 2: ИНВЕСТИЦИОННЫЙ ПОРТФЕЛЬ (АКЦИИ И ОБЛИГАЦИИ MOEX) -->
+<div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+    <div class="mb-4">
+        <h2 class="text-lg font-bold text-slate-800">📈 Облигации и Акции по счетам (MOEX Онлайн)</h2>
+        <p id="portfolio-summary-line" class="text-xs text-slate-500 mt-0.5">Загрузка котировок с Московской биржи...</p>
+        <div class="mt-2 flex flex-wrap gap-2 text-xs">
+            <a href="/api/portfolio/report.pdf" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md transition">📄 Скачать PDF для ИИ</a>
+            <a href="/api/portfolio/prompt.txt" target="_blank" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-md transition">📝 Промпт (текст)</a>
+        </div>
+    </div>
+
+    <form id="add-asset-form" class="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-slate-50 p-3.5 rounded-lg border border-slate-200 mb-4 text-xs">
+        <input type="text" name="ticker" placeholder="Тикер MOEX (SBER, LKOH, SU26238RMFS4)" required class="px-3 py-2 border border-slate-300 rounded-md bg-white uppercase">
+        <select name="asset_type" class="px-3 py-2 border border-slate-300 rounded-md bg-white">
+            <option value="">Автоопределение типа</option>
+            <option value="stock">Акция</option>
+            <option value="bond">Облигация</option>
+            <option value="fund">Фонд (ПАИ / ETF)</option>
+        </select>
+        <input type="number" step="0.0001" name="amount" placeholder="Количество (шт.)" required class="px-3 py-2 border border-slate-300 rounded-md bg-white">
+        <div class="flex gap-2">
+            <input type="number" step="0.0001" name="average_buy_price" placeholder="Средняя цена покупки (₽), необязательно" class="w-full px-3 py-2 border border-slate-300 rounded-md bg-white">
+            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-md whitespace-nowrap transition">+ Актив</button>
+        </div>
+    </form>
+
+    <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse text-sm">
+            <thead>
+                <tr class="bg-slate-100 text-slate-600 text-xs uppercase border-b border-slate-200">
+                    <th class="py-2.5 px-4">Тикер</th>
+                    <th class="py-2.5 px-4">Тип</th>
+                    <th class="py-2.5 px-4 text-right">Кол-во</th>
+                    <th class="py-2.5 px-4 text-right">Ср. цена покупки</th>
+                    <th class="py-2.5 px-4 text-right">Цена MOEX сейчас</th>
+                    <th class="py-2.5 px-4 text-right">Текущая стоимость</th>
+                    <th class="py-2.5 px-4 text-right">Прибыль / Убыток (PnL)</th>
+                    <th class="py-2.5 px-4 text-right">Доля</th>
+                    <th class="py-2.5 px-4 text-center">Удалить</th>
+                </tr>
+            </thead>
+            <tbody id="portfolio-tbody" class="divide-y divide-slate-200"></tbody>
+        </table>
+    </div>
+
+    <div class="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="lg:col-span-2 border border-slate-200 rounded-lg p-4">
+            <p id="income-title" class="text-sm font-bold text-slate-800 mb-2">💸 Ожидаемый пассивный доход</p>
+            <div id="income-bars" class="flex items-end gap-1 h-24"></div>
+            <p class="text-[11px] text-slate-400 mt-2">Брутто, до налога. Облигации — по графику купонов MOEX; акции и фонды — по выплатам прошлого года (оценка, не гарантия).</p>
+        </div>
+        <div id="findings-box" class="border border-amber-200 bg-amber-50 rounded-lg p-4 text-xs text-amber-900 space-y-1"></div>
+    </div>
+
+    <div id="rebalance-box" class="mt-4 bg-indigo-50 border border-indigo-200 rounded-lg p-4 text-xs text-indigo-900 space-y-1"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let catChartInstance = null;
+    let bankChartInstance = null;
+
+    let currentMode = 'all';
+    let anchorDate = new Date();
+
+    function formatDateISO(d) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    }
+
+    function updateModeButtonsUI() {
+        ['month', 'quarter', 'year', 'all'].forEach(m => {
+            const btn = document.getElementById(`btn-mode-${m}`);
+            btn.className = (m === currentMode)
+                ? 'px-3 py-1.5 rounded-md bg-emerald-600 text-white shadow-sm transition'
+                : 'px-3 py-1.5 rounded-md text-slate-600 hover:bg-slate-200 transition';
+        });
+    }
+
+    function setMode(mode) {
+        currentMode = mode;
+        updateModeButtonsUI();
+        applyPeriodFromAnchor();
+    }
+
+    function shiftPeriod(delta) {
+        if (currentMode === 'all' || currentMode === 'custom') {
+            currentMode = 'month';
+            updateModeButtonsUI();
+        }
+        if (currentMode === 'month') anchorDate.setMonth(anchorDate.getMonth() + delta);
+        else if (currentMode === 'quarter') anchorDate.setMonth(anchorDate.getMonth() + delta * 3);
+        else if (currentMode === 'year') anchorDate.setFullYear(anchorDate.getFullYear() + delta);
+        applyPeriodFromAnchor();
+    }
+
+    function applyPeriodFromAnchor() {
+        const startInput = document.getElementById('date-start');
+        const endInput = document.getElementById('date-end');
+        const label = document.getElementById('period-label');
+
+        if (currentMode === 'all') {
+            startInput.value = '';
+            endInput.value = '';
+            label.innerText = 'Период: За всё время (все загруженные операции)';
+            loadDashboard();
+            return;
+        }
+
+        const y = anchorDate.getFullYear();
+        const m = anchorDate.getMonth();
+        let startDt, endDt;
+
+        if (currentMode === 'month') {
+            startDt = new Date(y, m, 1);
+            endDt = new Date(y, m + 1, 0);
+            label.innerText = `Период: Месяц (${startDt.toLocaleString('ru-RU', { month: 'long', year: 'numeric' })})`;
+        } else if (currentMode === 'quarter') {
+            const q = Math.floor(m / 3);
+            startDt = new Date(y, q * 3, 1);
+            endDt = new Date(y, q * 3 + 3, 0);
+            label.innerText = `Период: ${q + 1}-й квартал ${y} г.`;
+        } else if (currentMode === 'year') {
+            startDt = new Date(y, 0, 1);
+            endDt = new Date(y, 11, 31);
+            label.innerText = `Период: ${y} год`;
+        }
+
+        startInput.value = formatDateISO(startDt);
+        endInput.value = formatDateISO(endDt);
+        loadDashboard();
+    }
+
+    function onCustomDateChange() {
+        currentMode = 'custom';
+        updateModeButtonsUI();
+        const s = document.getElementById('date-start').value;
+        const e = document.getElementById('date-end').value;
+        document.getElementById('period-label').innerText = `Период: Произвольный (${s || '...'} — ${e || '...'})`;
+        loadDashboard();
+    }
+
+    async function loadDashboard() {
+        const s = document.getElementById('date-start').value;
+        const e = document.getElementById('date-end').value;
+        const incTransfers = document.getElementById('toggle-transfers')?.checked || false;
+
+        const params = new URLSearchParams();
+        if (s) params.append('start_date', s);
+        if (e) params.append('end_date', e);
+        params.append('include_transfers', incTransfers ? 'true' : 'false');
+
+        try {
+            const resp = await fetch(`/api/dashboard-stats?${params.toString()}`);
+            if (!resp.ok) throw new Error(`Ошибка сервера (${resp.status})`);
+            const data = await resp.json();
+
+            // Cash Flow и обязательные платежи
+            const cfSign = data.cash_flow >= 0 ? '+' : '';
+            document.getElementById('stat-cashflow').innerText = `${cfSign}${data.cash_flow.toLocaleString('ru-RU')} ₽`;
+            document.getElementById('stat-mandatory').innerText = `Доходы ${data.clean_income.toLocaleString('ru-RU')} ₽ − расходы ${data.clean_expense.toLocaleString('ru-RU')} ₽ (из них обязательные: ${data.mandatory_expense.toLocaleString('ru-RU')} ₽)`;
+
+            // Чистые и общие суммы (с переводами)
+            document.getElementById('stat-income').innerText = `+${data.clean_income.toLocaleString('ru-RU')} ₽`;
+            document.getElementById('stat-income-all').innerText = `С переводами: +${data.total_income_all.toLocaleString('ru-RU')} ₽`;
+
+            document.getElementById('stat-expense').innerText = `-${data.clean_expense.toLocaleString('ru-RU')} ₽`;
+            document.getElementById('stat-expense-all').innerText = `С переводами: -${data.total_expense_all.toLocaleString('ru-RU')} ₽`;
+
+            document.getElementById('stat-deposits').innerText = `Вклады: ${data.total_deposits.toLocaleString('ru-RU')} ₽`;
+            document.getElementById('stat-portfolio').innerText = `Портфель: ${data.portfolio.total_current.toLocaleString('ru-RU')} ₽`;
+            document.getElementById('stat-cash').innerText = `Наличные: ${data.cash_balance.toLocaleString('ru-RU')} ₽`;
+            document.getElementById('stat-uncat').innerText = data.uncategorized_count;
+
+            renderCharts(data);
+            renderDeposits(data.deposits);
+            renderPortfolio(data.portfolio);
+            await loadVacations();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    function renderCharts(data) {
+        if (catChartInstance) catChartInstance.destroy();
+        if (bankChartInstance) bankChartInstance.destroy();
+
+        const palette = [
+            '#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6',
+            '#ec4899', '#14b8a6', '#f97316', '#06b6d4', '#84cc16',
+            '#6366f1', '#d946ef', '#0ea5e9', '#eab308', '#64748b'
+        ];
+
+        const ctxCat = document.getElementById('categoriesChart').getContext('2d');
+        catChartInstance = new Chart(ctxCat, {
+            type: 'doughnut',
+            data: {
+                labels: data.categories_labels.length ? data.categories_labels : ['Нет расходов за период'],
+                datasets: [{
+                    data: data.categories_values.length ? data.categories_values : [1],
+                    backgroundColor: data.categories_values.length ? palette : ['#e2e8f0']
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+
+        const ctxBank = document.getElementById('banksChart').getContext('2d');
+        bankChartInstance = new Chart(ctxBank, {
+            type: 'bar',
+            data: {
+                labels: data.banks_labels,
+                datasets: [{
+                    label: 'Расходы (₽)',
+                    data: data.banks_values,
+                    backgroundColor: '#3b82f6',
+                    borderRadius: 6
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+    }
+
+    async function loadVacations() {
+        const resp = await fetch('/api/vacations');
+        if (!resp.ok) return;
+        const items = await resp.json();
+        const box = document.getElementById('vacations-list');
+        box.innerHTML = '';
+
+        if (!items.length) {
+            box.innerHTML = `<span class="text-xs text-slate-400">Периоды отпусков не заданы.</span>`;
+            return;
+        }
+        for (const v of items) {
+            box.innerHTML += `
+                <div class="inline-flex items-center space-x-2 bg-teal-50 border border-teal-300 text-teal-900 px-3 py-1.5 rounded-lg text-xs">
+                    <span class="font-semibold">✈️ ${escapeHtml(v.name)}</span>
+                    <span class="text-teal-700">(${escapeHtml(v.display_period)})</span>
+                    <button onclick="deleteVacation(${v.id})" class="text-rose-500 hover:text-rose-700 font-bold ml-1" title="Удалить период">✕</button>
+                </div>
+            `;
+        }
+    }
+
+    document.getElementById('add-vacation-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const payload = {
+            name: fd.get('name'),
+            start_date: fd.get('start_date'),
+            end_date: fd.get('end_date')
+        };
+        const resp = await fetch('/api/vacations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+            e.target.reset();
+            showToast(`Отпуск «${data.name}» добавлен! Перенесено трат в Путешествия: ${data.reassigned_transactions}`);
+            loadDashboard();
+        } else {
+            showToast(data.detail || 'Ошибка сохранения отпуска', 'error');
+        }
+    });
+
+    async function deleteVacation(id) {
+        if (!confirm('Удалить этот период отпуска?')) return;
+        const resp = await fetch(`/api/vacations/${id}`, { method: 'DELETE' });
+        if (resp.ok) {
+            showToast('Период отпуска удален');
+            loadDashboard();
+        }
+    }
+
+    const rub = (n, digits = 2) => Number(n).toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: digits });
+
+    function pluralDays(n) {
+        const m10 = n % 10, m100 = n % 100;
+        if (m10 === 1 && m100 !== 11) return 'день';
+        if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return 'дня';
+        return 'дней';
+    }
+
+    function renderDeposits(deposits) {
+        const tbody = document.getElementById('deposits-tbody');
+        tbody.innerHTML = '';
+        if (!deposits.length) {
+            tbody.innerHTML = `<tr><td colspan="8" class="py-6 text-center text-slate-400">Вклады пока не добавлены.</td></tr>`;
+            return;
+        }
+        for (const d of deposits) {
+            const isSavings = d.kind === 'savings';
+            const badge = isSavings
+                ? '<span class="ml-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-bold uppercase">накопительный</span>'
+                : '<span class="ml-1 px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-bold uppercase">вклад</span>';
+
+            let termCell, incomeCell, payoutCell, actions;
+
+            if (isSavings) {
+                termCell = `<span class="text-slate-500">Без срока</span><div class="text-[11px] text-slate-400">%: ежедневно, зачисление 12-го</div>`;
+                incomeCell = `<span class="text-emerald-600 font-medium">≈ +${rub(d.expected_yearly_income)} ₽/год</span>
+                    <div class="text-[11px] text-slate-400">≈ +${rub(d.daily_income)} ₽/день</div>`;
+                payoutCell = `<span class="font-bold text-slate-800">≈ +${rub(d.next_credit_amount)} ₽</span>
+                    <div class="text-[11px] text-slate-400">зачисление ${d.next_credit_date}</div>
+                    <div class="text-[11px] text-slate-400">накоплено с ${d.last_credit_date}: ≈ ${rub(d.accrued_since_last_credit)} ₽</div>`;
+                actions = `<button onclick="editSavingsBalance(${d.id}, ${d.amount})" title="Изменить остаток (пополнение / снятие)" class="text-blue-500 hover:text-blue-700 text-xs font-bold mr-2">✎</button>
+                           <button onclick="deleteDeposit(${d.id})" class="text-rose-500 hover:text-rose-700 text-xs font-bold">✕</button>`;
+            } else if (d.has_schedule) {
+                const capNote = d.capitalization ? ' · с капитализацией' : '';
+                let status;
+                if (d.is_finished) status = '<span class="text-emerald-600 font-semibold">Завершён</span>';
+                else if (d.not_started) status = '<span class="text-slate-500">Ещё не открыт</span>';
+                else status = `Осталось ${d.days_left} ${pluralDays(d.days_left)} (${d.progress_pct}%)`;
+                termCell = `${d.opened_at} → <b>${d.end_date}</b>
+                    <div class="text-[11px] text-slate-400">${d.term_months} мес.${capNote}</div>
+                    <div class="text-[11px] text-slate-500">${status}</div>`;
+                incomeCell = `<span class="text-emerald-600 font-medium">+${rub(d.interest_total)} ₽</span>
+                    <div class="text-[11px] text-slate-400">за весь срок</div>
+                    <div class="text-[11px] text-slate-400">уже начислено ≈ ${rub(d.accrued_to_date)} ₽</div>`;
+                payoutCell = `<span class="font-bold text-slate-800">${rub(d.final_amount)} ₽</span>
+                    <div class="text-[11px] text-slate-400">сумма + проценты на ${d.end_date}</div>`;
+                actions = `<button onclick="deleteDeposit(${d.id})" class="text-rose-500 hover:text-rose-700 text-xs font-bold">✕</button>`;
+            } else {
+                // Старая запись без даты открытия и срока
+                termCell = `<span class="text-slate-500">${d.end_date || 'Срок не указан'}</span>`;
+                incomeCell = `<span class="text-emerald-600 font-medium">+${rub(d.expected_yearly_income)} ₽/год</span>
+                    <div class="text-[11px] text-amber-600">Удалите и добавьте заново с датой и сроком для точного расчёта</div>`;
+                payoutCell = '<span class="text-slate-400">—</span>';
+                actions = `<button onclick="deleteDeposit(${d.id})" class="text-rose-500 hover:text-rose-700 text-xs font-bold">✕</button>`;
+            }
+
+            tbody.innerHTML += `
+                <tr class="hover:bg-slate-50 align-top">
+                    <td class="py-3 px-4 font-medium">${escapeHtml(d.bank_name)}</td>
+                    <td class="py-3 px-4">${escapeHtml(d.title)}${badge}</td>
+                    <td class="py-3 px-4 text-right font-bold text-slate-800 whitespace-nowrap">${rub(d.amount)} ₽</td>
+                    <td class="py-3 px-4 text-right text-blue-600 font-semibold">${d.interest_rate}%</td>
+                    <td class="py-3 px-4 text-xs">${termCell}</td>
+                    <td class="py-3 px-4 text-right whitespace-nowrap">${incomeCell}</td>
+                    <td class="py-3 px-4 text-right whitespace-nowrap">${payoutCell}</td>
+                    <td class="py-3 px-4 text-center whitespace-nowrap">${actions}</td>
+                </tr>
+            `;
+        }
+    }
+
+    function renderPortfolio(p) {
+        const fmt = (v) => v.toLocaleString('ru-RU');
+        const summaryEl = document.getElementById('portfolio-summary-line');
+        let pnlHtml = '<span class="text-slate-400">не считается (нет цены покупки)</span>';
+        if (p.total_pnl !== null && p.cost_known_count) {
+            const pnlSign = p.total_pnl >= 0 ? '+' : '';
+            const pnlClass = p.total_pnl >= 0 ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold';
+            pnlHtml = `<span class="${pnlClass}">${pnlSign}${fmt(p.total_pnl)} ₽ (${pnlSign}${p.total_pnl_pct}%)</span>`;
+        }
+        const cashHtml = p.cash_rub !== null ? ` | Свободно на счёте: <b>${fmt(p.cash_rub)} ₽</b>` : '';
+        summaryEl.innerHTML = `Текущая стоимость: <b>${fmt(p.total_current)} ₽</b>${cashHtml} | Итоговый результат: ${pnlHtml}`;
+
+        const tbody = document.getElementById('portfolio-tbody');
+        tbody.innerHTML = '';
+
+        if (!p.positions.length) {
+            tbody.innerHTML = `<tr><td colspan="9" class="py-6 text-center text-slate-400">Портфель пуст.</td></tr>`;
+        } else {
+            for (const item of p.positions) {
+                const typeBadge = item.asset_type === 'bond'
+                    ? `<span class="px-2 py-0.5 bg-amber-100 text-amber-800 rounded text-xs">Облигация</span>`
+                    : item.asset_type === 'fund'
+                        ? `<span class="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded text-xs">Фонд</span>`
+                        : `<span class="px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded text-xs">Акция</span>`;
+                const avgCell = item.cost_known ? `${fmt(item.avg_buy_price)} ₽` : '—';
+                const priceCell = item.price_known ? `${fmt(item.current_price)} ₽` : 'нет данных';
+                let pnlCell = '<span class="text-slate-400">—</span>';
+                if (item.pnl !== null) {
+                    const isPlus = item.pnl >= 0;
+                    const sign = isPlus ? '+' : '';
+                    const badgeClass = isPlus ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700';
+                    pnlCell = `<span class="px-2 py-1 rounded font-semibold text-xs ${badgeClass}">${sign}${fmt(item.pnl)} ₽ (${sign}${item.pnl_pct}%)</span>`;
+                }
+
+                tbody.innerHTML += `
+                    <tr class="hover:bg-slate-50">
+                        <td class="py-3 px-4"><div class="font-mono font-bold text-slate-800">${escapeHtml(item.ticker)}</div><div class="text-[11px] text-slate-400">${escapeHtml(item.name)}</div></td>
+                        <td class="py-3 px-4">${typeBadge}</td>
+                        <td class="py-3 px-4 text-right">${item.amount} шт.</td>
+                        <td class="py-3 px-4 text-right text-slate-500">${avgCell}</td>
+                        <td class="py-3 px-4 text-right font-medium">${priceCell}</td>
+                        <td class="py-3 px-4 text-right font-bold">${fmt(item.current_value)} ₽</td>
+                        <td class="py-3 px-4 text-right">${pnlCell}</td>
+                        <td class="py-3 px-4 text-right text-slate-500">${item.share_pct}%</td>
+                        <td class="py-3 px-4 text-center">
+                            <button onclick="deleteAsset(${jsArg(item.ticker)})" class="text-rose-500 hover:text-rose-700 text-xs font-bold">✕</button>
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+
+        // Прогноз пассивного дохода по месяцам
+        const months = p.income_months || [];
+        const maxVal = Math.max(1, ...months.map(m => m.amount));
+        document.getElementById('income-title').innerText =
+            `💸 Ожидаемый пассивный доход: ${fmt(p.income_total)} ₽ за 12 мес. (≈ ${fmt(p.income_monthly_avg)} ₽/мес.)`;
+        document.getElementById('income-bars').innerHTML = months.map(m => {
+            const h = Math.max(2, Math.round(m.amount / maxVal * 100));
+            return `<div class="flex-1 flex flex-col items-center justify-end h-full" title="${escapeHtml(m.label)}: ${fmt(m.amount)} ₽">
+                        <div class="w-full bg-indigo-500 rounded-t" style="height:${h}%"></div>
+                        <span class="text-[9px] text-slate-400 mt-1">${escapeHtml(m.label.slice(5))}</span>
+                    </div>`;
+        }).join('');
+
+        // Наблюдения по правилам (факты, не советы)
+        const findings = p.findings || [];
+        document.getElementById('findings-box').innerHTML =
+            `<p class="font-bold mb-1">🔎 Наблюдения по портфелю</p>` +
+            (findings.length ? findings.map(f => `<div>${f.level === 'warn' ? '⚠️' : '•'} ${escapeHtml(f.text)}</div>`).join('')
+                             : '<div>Автоматические правила ничего не отметили.</div>');
+
+        const rebBox = document.getElementById('rebalance-box');
+        rebBox.innerHTML = `<p class="font-bold mb-1">📐 Математические рекомендации по ребалансировке (условные целевые доли 70% акции / 30% облигации — не совет):</p>` +
+            p.rebalance_advice.map(a => `<div>• ${escapeHtml(a)}</div>`).join('');
+    }
+
+    // ---- Форма вклада / накопительного счёта ----
+    const depForm = document.getElementById('add-deposit-form');
+    const termFields = document.getElementById('deposit-term-fields');
+    const depPreview = document.getElementById('deposit-preview');
+    const depHint = document.getElementById('deposit-form-hint');
+
+    function addMonthsJs(isoDate, months) {
+        const [y, m, d] = isoDate.split('-').map(Number);
+        const total = y * 12 + (m - 1) + months;
+        const ny = Math.floor(total / 12), nm = total % 12;
+        const lastDay = new Date(ny, nm + 1, 0).getDate();
+        return new Date(ny, nm, Math.min(d, lastDay));
+    }
+
+    function todayIso() {
+        const t = new Date();
+        return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    }
+
+    function currentKind() {
+        return depForm.querySelector('input[name="kind"]:checked').value;
+    }
+
+    function updateDepositFormMode() {
+        const isDeposit = currentKind() === 'deposit';
+        termFields.classList.toggle('hidden', !isDeposit);
+        depForm.opened_at.required = isDeposit;
+        depForm.term_months.required = isDeposit;
+        depHint.innerText = isDeposit
+            ? 'Проценты рассчитаются на весь срок и покажут итоговую сумму в конце.'
+            : 'Укажите текущий остаток. Проценты считаются ежедневно, зачисляются 12-го числа. При пополнении или снятии нажмите ✎ в таблице.';
+        updateDepositPreview();
+    }
+
+    function updateDepositPreview() {
+        const opened = depForm.opened_at.value;
+        const term = parseInt(depForm.term_months.value, 10);
+        if (currentKind() !== 'deposit' || !opened || !term || term < 1) { depPreview.innerText = ''; return; }
+        depPreview.innerText = 'Закончится: ' + addMonthsJs(opened, term).toLocaleDateString('ru-RU');
+    }
+
+    depForm.querySelectorAll('input[name="kind"]').forEach(r => r.addEventListener('change', updateDepositFormMode));
+    depForm.opened_at.addEventListener('input', updateDepositPreview);
+    depForm.term_months.addEventListener('input', updateDepositPreview);
+
+    function resetDepositForm() {
+        depForm.reset();
+        depForm.opened_at.value = todayIso();
+        updateDepositFormMode();
+    }
+    resetDepositForm();
+
+    depForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(depForm);
+        const kind = fd.get('kind');
+        const payload = {
+            kind,
+            bank_name: fd.get('bank_name'),
+            title: fd.get('title'),
+            amount: parseFloat(fd.get('amount')),
+            interest_rate: parseFloat(fd.get('interest_rate')),
+        };
+        if (kind === 'deposit') {
+            payload.opened_at = fd.get('opened_at');
+            payload.term_months = parseInt(fd.get('term_months'), 10);
+            payload.capitalization = fd.get('capitalization') === 'on';
+        }
+        const resp = await fetch('/api/deposits', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (resp.ok) {
+            resetDepositForm();
+            showToast(kind === 'deposit' ? 'Вклад добавлен!' : 'Накопительный счёт добавлен!');
+            loadDashboard();
+        } else {
+            let msg = 'Не удалось сохранить';
+            try { const err = await resp.json(); if (typeof err.detail === 'string') msg = err.detail; } catch (_) {}
+            showToast(msg, 'error');
+        }
+    });
+
+    async function editSavingsBalance(id, current) {
+        const raw = prompt('Новый остаток на накопительном счёте (₽):', current);
+        if (raw === null) return;
+        const value = parseFloat(String(raw).replace(/\s/g, '').replace(',', '.'));
+        if (!isFinite(value) || value < 0) { showToast('Введите корректную сумму', 'error'); return; }
+        const resp = await fetch(`/api/deposits/${id}/balance`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ amount: value })
+        });
+        if (resp.ok) {
+            showToast('Остаток обновлён');
+            loadDashboard();
+        } else {
+            showToast('Не удалось обновить остаток', 'error');
+        }
+    }
+
+    async function deleteDeposit(id) {
+        if (!confirm('Удалить этот вклад?')) return;
+        const resp = await fetch(`/api/deposits/${id}`, { method: 'DELETE' });
+        if (resp.ok) {
+            showToast('Вклад удален');
+            loadDashboard();
+        }
+    }
+
+    document.getElementById('add-asset-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const payload = {
+            ticker: fd.get('ticker'),
+            asset_type: fd.get('asset_type') || null,
+            amount: parseFloat(fd.get('amount')),
+            average_buy_price: fd.get('average_buy_price') ? parseFloat(fd.get('average_buy_price')) : null
+        };
+        const resp = await fetch('/api/assets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (resp.ok) {
+            e.target.reset();
+            showToast('Актив сохранен и переоценен по MOEX!');
+            loadDashboard();
+        }
+    });
+
+    async function deleteAsset(ticker) {
+        if (!confirm(`Удалить бумагу ${ticker} из портфеля?`)) return;
+        const resp = await fetch(`/api/assets/${ticker}`, { method: 'DELETE' });
+        if (resp.ok) {
+            showToast(`Бумага ${ticker} удалена`);
+            loadDashboard();
+        }
+    }
+
+    setMode('all');
+</script>
+{% endblock %}
