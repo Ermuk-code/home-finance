@@ -8,13 +8,18 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
 from app.bot.instance import bot, dp
 from app.finance.router import router as finance_router
 from app.finance.services.scheduler import setup_scheduler
 from app.health.router import router as health_router
+from app.health.dashboard import router as health_dashboard_router
+from app.health.abs_forecast import router as abs_forecast_router
 from app.users.router import router as users_router
 from app.web import auth, pages
+from app.web.report_render import router as report_render_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,10 +45,14 @@ app = FastAPI(
 
 # Авторизация и пользователи
 app.include_router(auth.router)
+app.mount('/static',StaticFiles(directory=str(Path(__file__).parent/'web'/'static')),name='static')
+app.include_router(report_render_router)
 app.include_router(users_router)
 # Домены
 app.include_router(finance_router)
 app.include_router(health_router)
+app.include_router(health_dashboard_router)
+app.include_router(abs_forecast_router)
 # HTML-страницы (Jinja2) и API дашборда
 app.include_router(pages.router)
 

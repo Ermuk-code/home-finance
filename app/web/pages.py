@@ -89,6 +89,8 @@ def _page(path: str, template: str, active_page: str, admin_only: bool = False) 
 
 
 _page("/", "index.html", "dashboard")
+_page("/health-dashboard", "health.html", "health")
+_page('/workouts', 'workouts.html', 'workouts')
 _page("/transactions", "transactions.html", "transactions")
 _page("/upload", "upload.html", "upload")
 _page("/income", "income.html", "income")

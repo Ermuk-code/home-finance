@@ -20,6 +20,7 @@
 | Метод | Путь | Кто | Описание |
 |---|---|---|---|
 | GET | `/api/users/me` | любой | Свой профиль |
+| PATCH | `/api/users/me/physical` | любой | Свои `gender`, `height_cm`, `birth_date` |
 | GET | `/api/users/overview` | admin | Сводка по всем участникам |
 | GET | `/api/users` | admin | Белый список |
 | POST | `/api/users` | admin | Добавить пользователя (telegram_id, name, role) |
@@ -74,12 +75,22 @@
 | GET | `/api/portfolio/prompt.txt` | Текстовый промпт для ИИ-анализа портфеля |
 
 ## Здоровье — `/api/health`
+
+[Календарь тренировок](workouts.md): `GET/POST /api/health/workouts`,
+`PATCH /api/health/workouts/{id}/complete`, `DELETE /api/health/workouts/{id}`,
+`GET /api/health/workouts/next`. Страница: `/workouts`.
+
+`GET /api/v1/health/forecast-abs?user_id=` — [прогноз по проценту жира](abs-forecast.md),
+авторизация cookie/Bearer, чужой профиль доступен только admin.
 | Метод | Путь | Кто | Описание |
 |---|---|---|---|
 | GET | `/api/health/weight?limit=` | любой | История веса |
 | POST | `/api/health/weight` | любой | `{"weight_kg": 82.4, "bmi": 24.1, "timestamp": "…"}` |
 | GET | `/api/health/nutrition?limit=` | любой | Суточные КБЖУ |
-| GET | `/api/health/activity?limit=` | любой | Активность (пока всегда пусто) |
+| GET | `/api/health/summary?start_date=&end_date=` | любой | [Дневные BMR, TDEE, баланс, средние и прогноз](health-analytics.md), только один профиль |
+| GET | `/api/health/activity?limit=` | любой | История суточных шагов и активных ккал |
+| GET | `/api/health/activity/today` | любой | Итоги сегодня: `date`, `profiles_count`, `steps`, `active_calories`; без данных суммы `null`. У admin с `all_users=true` — сумма доступных профилей |
+| POST | `/api/health/webhook/activity` | Home Assistant | `X-Webhook-Token`; тело `{"profile_alias":"admin","steps":3200,"active_calories":100}`. Активные ккал необязательны (0). Атомарный UPSERT по `(user_id,date)`, дата по `ACTIVITY_TZ`; счетчики не уменьшаются. Ошибки 401/503/404/409 как у веса, 422 — некорректные значения |
 | POST | `/api/health/webhook/weight` | Home Assistant | Заголовок `X-Webhook-Token`; тело `{"profile_alias": "admin", "weight_kg": 82.4}`. Коды: 503 нет токена в .env, 401 неверный токен, 404/409 профиль не найден/не уникален |
 | GET | `/api/health/fatsecret/callback` | браузер после FatSecret | Завершение OAuth-привязки |
 

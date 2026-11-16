@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Календарь тренировок — Life OS{% endblock %}
+{% block content %}
+<style>
+ #workout-dialog{width:min(820px,calc(100% - 24px));max-height:90vh;border:0;border-radius:20px;padding:24px;overflow:auto}
+ #workout-dialog::backdrop{background:rgba(15,23,42,.65)}
+ #workout-form input{width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:9px 10px;margin-top:5px;background:white}
+ #workout-form label{font-size:13px;color:#475569;display:block}
+</style>
+<header class="bg-slate-900 text-white rounded-2xl p-6 sm:p-8 mb-6">
+ <p class="text-xs text-emerald-300 uppercase tracking-widest">Life OS / Тренировки</p>
+ <h1 class="text-3xl font-bold mt-2">Каждая тренировка — в плане</h1>
+ <p class="text-slate-300 text-sm mt-3">Расписание на неделю, упражнения и отметки выполнения. В 08:00 бот напомнит о невыполненных тренировках на сегодня.</p>
+</header>
+<div class="flex flex-wrap items-end gap-3 bg-white border rounded-xl p-4 mb-5">
+ <label class="text-sm text-slate-500">Пользователь<select id="workout-user" class="block border rounded-lg px-3 py-2 mt-1 bg-white" aria-label="Пользователь"></select></label>
+ <div class="flex items-center gap-2 flex-wrap ml-auto">
+  <button id="previous-week" class="border rounded-lg px-3 py-2 text-sm" type="button" aria-label="Предыдущая неделя">←</button>
+  <button id="current-week" class="border rounded-lg px-3 py-2 text-sm" type="button">Текущая неделя</button>
+  <button id="next-week" class="border rounded-lg px-3 py-2 text-sm" type="button" aria-label="Следующая неделя">→</button>
+  <button id="add-workout" class="bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-semibold" disabled type="button">＋ Добавить тренировку</button>
+ </div>
+</div>
+<div class="flex flex-wrap items-center justify-between gap-2 mb-4"><h2 id="week-label" class="font-semibold text-lg">Загрузка недели…</h2><p id="week-progress" class="text-sm text-slate-500"></p></div>
+<p id="calendar-status" class="text-sm text-slate-500 mb-4" role="status">Загрузка расписания…</p>
+<div id="workout-calendar" class="grid sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3 items-start"></div>
+<p id="workout-timezone" class="text-xs text-slate-500 mt-5">Время утреннего напоминания соответствует часовому поясу здоровья на сервере.</p>
+<dialog id="workout-dialog" aria-labelledby="workout-dialog-title">
+ <div class="flex justify-between items-start gap-3 mb-5"><div><h2 id="workout-dialog-title" class="text-xl font-bold">Добавить тренировку</h2><p id="modal-user" class="text-sm text-slate-500 mt-1"></p></div><button id="close-workout" type="button" class="text-slate-500 text-xl px-2" aria-label="Закрыть">×</button></div>
+ <form id="workout-form" class="space-y-4">
+  <div class="grid sm:grid-cols-2 gap-4"><label>Дата тренировки<input name="date" type="date" required></label><label>Название тренировки<input name="title" required maxlength="120" placeholder="Например, День ног"></label></div>
+  <div class="flex justify-between items-center"><h3 class="font-semibold">Упражнения</h3><span class="text-xs text-slate-500">До 20 упражнений</span></div>
+  <div id="exercise-rows" class="space-y-3"></div>
+  <button id="add-exercise" type="button" class="text-emerald-700 font-semibold text-sm">＋ Добавить упражнение</button>
+  <p id="workout-form-error" role="alert" class="text-sm text-rose-700 whitespace-pre-line"></p>
+  <div class="flex justify-end gap-3 pt-4 border-t"><button id="cancel-workout" type="button" class="px-4 py-2 border rounded-lg">Отмена</button><button id="save-workout" type="submit" class="px-5 py-2 bg-emerald-700 text-white rounded-lg font-semibold">Сохранить тренировку</button></div>
+ </form>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script>
+const userSelect=document.getElementById('workout-user'),calendar=document.getElementById('workout-calendar');
+const dialog=document.getElementById('workout-dialog'),form=document.getElementById('workout-form'),exerciseRows=document.getElementById('exercise-rows');
+const status=document.getElementById('calendar-status'),formError=document.getElementById('workout-form-error');
+const addButton=document.getElementById('add-workout'),saveButton=document.getElementById('save-workout');
+let today=null,weekStart=null,generation=0,modalOwner=null,saving=false;
+const esc=escapeHtml;
+function shiftDay(value,offset){const d=new Date(value+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+offset);return d.toISOString().slice(0,10);}
+function monday(value){const d=new Date(value+'T12:00:00Z');return shiftDay(value,-((d.getUTCDay()+6)%7));}
+function dateLabel(value){return value.split('-').reverse().join('.');}
+function scoped(id=userSelect.value){return new URLSearchParams({target_user_id:id});}
+function errorText(detail){
+ if(typeof detail==='string')return detail;
+ if(Array.isArray(detail)){const labels={date:'Дата',title:'Название',name:'Упражнение',sets:'Подходы',reps:'Повторения',weight_kg:'Рабочий вес',exercises:'Список упражнений'};return detail.map(e=>`${labels[e.loc?.at(-1)]||'Поле формы'}: ${e.msg}`).join('\n');}
+ return 'Не удалось выполнить запрос. Попробуйте еще раз.';
+}
+async function request(path,params,options={}){
+ const response=await fetch('/api/health/workouts'+path+(params?'?'+params:''),options);
+ if(response.status===204)return null;
+ let data;try{data=await response.json();}catch(_){throw new Error('Сервер вернул некорректный ответ');}
+ if(!response.ok)throw new Error(errorText(data.detail));return data;
+}
+function addExercise(){
+ if(exerciseRows.children.length>=20)return;
+ const row=document.createElement('fieldset');row.className='bg-slate-50 rounded-xl p-3 border border-slate-200';row.dataset.exercise='';
+ row.innerHTML=`<legend class="text-sm font-semibold px-1">Упражнение ${exerciseRows.children.length+1}</legend><div class="grid sm:grid-cols-12 gap-3">
+ <label class="sm:col-span-5">Название<input name="name" maxlength="100" required placeholder="Например, Приседания"></label>
+ <label class="sm:col-span-2">Подходы<input name="sets" type="number" min="1" max="100" step="1" value="3" required></label>
+ <label class="sm:col-span-3">Повторения<input name="reps" maxlength="40" required placeholder="10–12"></label>
+ <label class="sm:col-span-2">Вес, кг<input name="weight_kg" type="number" min="0" max="999.99" step="0.01" placeholder="—"></label></div>
+ <button class="remove-exercise text-rose-600 text-xs mt-3" type="button">Удалить упражнение</button>`;
+ exerciseRows.appendChild(row);updateExerciseControls();
+}
+function updateExerciseControls(){
+ document.getElementById('add-exercise').disabled=exerciseRows.children.length>=20;
+ [...exerciseRows.children].forEach((row,index)=>{row.querySelector('legend').textContent=`Упражнение ${index+1}`;row.querySelector('button').disabled=exerciseRows.children.length===1;});
+}
+function openModal(value){
+ if(!today||!userSelect.value||saving)return;
+ modalOwner=userSelect.value;form.reset();formError.textContent='';exerciseRows.replaceChildren();addExercise();
+ form.elements.date.value=value;
+ document.getElementById('modal-user').textContent=`Профиль: ${userSelect.selectedOptions[0].textContent}`;
+ saveButton.disabled=false;dialog.showModal();
+}
+function closeModal(){if(!saving)dialog.close();}
+document.getElementById('close-workout').addEventListener('click',closeModal);
+document.getElementById('cancel-workout').addEventListener('click',closeModal);
+dialog.addEventListener('cancel',e=>{if(saving)e.preventDefault();});
+document.getElementById('add-exercise').addEventListener('click',addExercise);
+exerciseRows.addEventListener('click',e=>{const button=e.target.closest('.remove-exercise');if(button&&exerciseRows.children.length>1){button.closest('fieldset').remove();updateExerciseControls();}});
+addButton.addEventListener('click',()=>openModal(today>=weekStart&&today<=shiftDay(weekStart,6)?today:weekStart));
+async function loadWeek(){
+ const token=++generation,requestedStart=weekStart;
+ addButton.disabled=true;calendar.replaceChildren();status.textContent='Загрузка расписания…';document.getElementById('week-progress').textContent='';
+ document.getElementById('week-label').textContent=`${dateLabel(requestedStart)} — ${dateLabel(shiftDay(requestedStart,6))}`;
+ try{
+  const params=scoped();params.set('start_date',requestedStart);params.set('end_date',shiftDay(requestedStart,6));
+  const workouts=await request('',params);if(token!==generation)return;
+  for(let i=0;i<7;i++){
+   const day=shiftDay(requestedStart,i),plans=workouts.filter(w=>w.date===day),card=document.createElement('section');
+   card.className=`border rounded-xl p-3 min-h-48 ${day===today?'bg-emerald-50 border-emerald-300':'bg-white border-slate-200'}`;
+   const weekday=new Intl.DateTimeFormat('ru-RU',{weekday:'long',timeZone:'UTC'}).format(new Date(day+'T12:00:00Z'));
+   card.innerHTML=`<div class="flex items-center justify-between gap-2 mb-3"><div><h3 class="font-bold capitalize text-sm">${weekday}</h3><p class="text-xs text-slate-500">${dateLabel(day)}${day===today?' · сегодня':''}</p></div><button type="button" data-add-date="${day}" class="text-emerald-700 text-xl px-1" aria-label="Добавить тренировку на ${dateLabel(day)}">＋</button></div>`;
+   if(!plans.length)card.innerHTML+='<p class="text-xs text-slate-400 py-6">Тренировок нет</p>';
+   for(const w of plans){
+    const article=document.createElement('article');article.className='rounded-lg border border-slate-200 bg-white p-3 mb-3 break-words';
+    article.innerHTML=`<p class="text-[11px] font-semibold ${w.is_completed?'text-emerald-700':'text-indigo-600'}">${w.is_completed?'✅ Выполнено':'По плану'}</p><h4 class="font-bold text-sm mt-1">${esc(w.title)}</h4>
+     <ul class="text-xs text-slate-600 space-y-2 my-3">${w.exercises.map(e=>`<li><span class="font-medium">${esc(e.name)}</span><br>${e.sets} × ${esc(e.reps)}${e.weight_kg===null?'':` · ${Number(e.weight_kg).toLocaleString('ru-RU')} кг`}</li>`).join('')}</ul>
+     <div class="flex flex-col items-start gap-2">${w.is_completed?'':`<button type="button" data-complete="${w.id}" class="text-xs text-emerald-700 font-semibold">✅ Выполнено</button>`}<button type="button" data-delete="${w.id}" class="text-xs text-rose-600">Удалить</button></div>`;
+    card.appendChild(article);
+   }calendar.appendChild(card);
+  }
+  status.textContent=`Профиль: ${userSelect.selectedOptions[0].textContent}. Можно запланировать несколько тренировок на один день.`;
+  document.getElementById('week-progress').textContent=`Выполнено ${workouts.filter(w=>w.is_completed).length} из ${workouts.length}`;
+ }catch(err){if(token===generation)status.textContent=err.message;}
+ finally{if(token===generation)addButton.disabled=false;}
+}
+calendar.addEventListener('click',async e=>{
+ const add=e.target.closest('[data-add-date]');if(add){openModal(add.dataset.addDate);return;}
+ const button=e.target.closest('[data-complete],[data-delete]');if(!button)return;
+ const id=button.dataset.complete||button.dataset.delete,owner=userSelect.value;
+ if(button.dataset.delete&&!confirm('Удалить тренировку вместе со списком упражнений?'))return;
+ button.disabled=true;
+ try{await request('/'+id+(button.dataset.complete?'/complete':''),scoped(owner),{method:button.dataset.complete?'PATCH':'DELETE'});
+  showToast(button.dataset.complete?'Тренировка выполнена':'План удален');if(userSelect.value===owner)await loadWeek();}
+ catch(err){showToast(err.message,'error');button.disabled=false;}
+});
+form.addEventListener('submit',async e=>{
+ e.preventDefault();if(saving)return;formError.textContent='';
+ const body={date:form.elements.date.value,title:form.elements.title.value.trim(),exercises:[...exerciseRows.children].map(row=>({
+  name:row.querySelector('[name=name]').value.trim(),sets:Number(row.querySelector('[name=sets]').value),reps:row.querySelector('[name=reps]').value.trim(),
+  weight_kg:row.querySelector('[name=weight_kg]').value===''?null:Number(row.querySelector('[name=weight_kg]').value)}))};
+ if(!body.title||body.exercises.some(e=>!e.name||!e.reps)){formError.textContent='Заполните название тренировки, упражнения и повторения.';return;}
+ saving=true;saveButton.disabled=true;
+ try{await request('',scoped(modalOwner),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  dialog.close();showToast('Тренировка добавлена');await loadWeek();}
+ catch(err){formError.textContent=err.message;}
+ finally{saving=false;saveButton.disabled=false;}
+});
+document.getElementById('previous-week').addEventListener('click',()=>{if(weekStart){weekStart=shiftDay(weekStart,-7);loadWeek();}});
+document.getElementById('next-week').addEventListener('click',()=>{if(weekStart){weekStart=shiftDay(weekStart,7);loadWeek();}});
+document.getElementById('current-week').addEventListener('click',()=>{if(today){weekStart=monday(today);loadWeek();}});
+userSelect.addEventListener('change',loadWeek);
+(async()=>{try{
+ const [profileResponse,todayResponse,meResponse]=await Promise.all([fetch('/api/health/profiles'),fetch('/api/health/activity/today'),fetch('/api/users/me')]);
+ if(!profileResponse.ok||!todayResponse.ok||!meResponse.ok)throw new Error('Не удалось загрузить профиль. Проверьте вход в приложение.');
+ const profiles=await profileResponse.json(),day=await todayResponse.json(),me=await meResponse.json();today=day.date;weekStart=monday(today);
+ for(const p of profiles){const option=document.createElement('option');option.value=p.id;option.textContent=p.name;userSelect.appendChild(option);}
+ userSelect.value=me.id;document.getElementById('workout-timezone').textContent='Напоминания: ежедневно в 08:00 по часовому поясу здоровья сервера. Выполненные тренировки не напоминаются.';
+ await loadWeek();
+}catch(err){status.textContent=err.message;}})();
+</script>
+{% endblock %}

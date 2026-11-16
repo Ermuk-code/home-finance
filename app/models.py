@@ -14,10 +14,11 @@ from app.finance.models import (
     Transaction,
     Vacation,
 )
-from app.health.models import ActivityLog, DailyNutrition, WeightLog
+from app.health.models import ActivityLog, BodyMeasurement, DailyNutrition, HealthMetric, WeightLog, Workout, WorkoutExercise
 
 __all__ = [
     "ROLE_ADMIN", "ROLE_USER", "ROLES", "User",
     "Asset", "Category", "CategoryLimit", "Deposit", "IncomeRule", "Reminder", "Transaction", "Vacation",
-    "ActivityLog", "DailyNutrition", "WeightLog",
+    "ActivityLog", "BodyMeasurement", "DailyNutrition", "WeightLog", "HealthMetric",
+    "Workout", "WorkoutExercise",
 ]

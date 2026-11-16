@@ -40,6 +40,8 @@ async def seed_users(session: AsyncSession) -> List[Tuple[str, User]]:
             changed = user.name != name or user.role != role
             user.name, user.role = name, role
             action = "updated" if changed else "unchanged"
+        if telegram_id == settings.ADMIN_TELEGRAM_ID and user.height_cm is None:
+            user.height_cm = 184
         result.append((action, user))
     await session.commit()
     return result

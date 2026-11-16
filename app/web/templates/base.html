@@ -12,10 +12,12 @@
     <!-- Навигационная панель -->
     <nav class="bg-slate-900 text-white shadow-md">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-between h-16 items-center">
-                <div class="flex items-center space-x-6">
+            <div class="flex justify-between min-h-16 items-center flex-wrap gap-2 py-2">
+                <div class="flex flex-wrap items-center gap-2">
                     <a href="/" class="text-lg font-bold tracking-tight text-emerald-400">💰 Life OS</a>
-                    <div class="hidden md:flex space-x-2">
+<a href="/health-dashboard" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'health' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Здоровье</a>
+                    <a href="/workouts" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'workouts' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Тренировки</a>
+                    <div class="hidden xl:flex flex-wrap gap-1">
                         <a href="/" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'dashboard' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Дашборд</a>
                         <a href="/transactions" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'transactions' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Транзакции</a>
                         <a href="/income" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'income' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Доходы</a>

@@ -76,6 +76,9 @@
     </div>
 </div>
 
+<a href="/health-dashboard" class="block bg-emerald-50 border border-emerald-200 rounded-xl p-5 mb-6 text-emerald-800 font-semibold">Здоровье → Статистика, замеры и план питания</a>
+<a href="/workouts" id="next-workout" class="block bg-white border border-slate-200 rounded-xl p-4 mb-6 text-slate-700" aria-live="polite">Ближайшая тренировка: загрузка…</a>
+
 <!-- Графики доходов и расходов -->
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
     <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
@@ -246,6 +249,17 @@
 
 {% block scripts %}
 <script>
+    (async () => {
+        const badge = document.getElementById('next-workout');
+        try {
+            const response = await fetch('/api/health/workouts/next');
+            if (!response.ok) throw new Error();
+            const workout = await response.json();
+            badge.textContent = workout
+                ? `Ближайшая тренировка: ${workout.date.split('-').reverse().join('.')} — ${workout.title}`
+                : 'Ближайшая тренировка: пока не запланирована. Открыть календарь →';
+        } catch (_) { badge.textContent = 'Не удалось загрузить ближайшую тренировку. Открыть календарь →'; }
+    })();
     let catChartInstance = null;
     let bankChartInstance = null;
 

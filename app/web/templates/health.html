@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}Здоровье — Life OS{% endblock %}
+{% block content %}
+<style>
+ .health-card{background:white;border:1px solid #e2e8f0;border-radius:16px;padding:22px}
+ .health-form label{display:block;font-size:13px;color:#475569}
+ .health-form input,.health-form select{display:block;width:100%;padding:9px 10px;border:1px solid #cbd5e1;border-radius:8px;background:white;margin-top:5px;color:#0f172a}
+ .health-form button,.health-button{background:#047857;color:white;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:600}
+ .health-form button:disabled{opacity:.5}
+ .health-metric{font-size:26px;font-weight:700;letter-spacing:-.5px;margin-top:8px}
+</style>
+<header class="rounded-2xl bg-slate-900 text-white p-6 sm:p-8 mb-6">
+ <p class="uppercase tracking-widest text-xs text-emerald-300">Life OS / Здоровье</p>
+ <h1 class="text-3xl font-bold mt-2">Измерения → понимание → план</h1>
+ <p class="text-slate-300 mt-3 max-w-2xl">Вес, талия, питание и активность в одном месте. Смотрите изменения за период и стройте личный план на основе своих данных.</p>
+</header>
+<form id="view-form" class="health-card health-form grid sm:grid-cols-4 gap-4 mb-6">
+ <label>Пользователь<select id="profile-select" name="profile" aria-label="Пользователь"></select></label>
+ <label>Начало периода<input type="date" name="start" aria-label="Начало периода"></label>
+ <label>Конец периода<input type="date" name="end" aria-label="Конец периода"></label>
+ <div class="flex items-end"><button type="submit" class="w-full">Показать статистику</button></div>
+</form>
+<p id="page-status" role="status" class="text-sm text-slate-500 mb-4">Загрузка профилей…</p>
+<div id="comparison-section" class="health-card mb-6 hidden">
+ <div class="flex flex-wrap items-center justify-between gap-3 mb-3"><h2 class="font-bold text-lg">Сравнение пользователей</h2><button id="compare-button" type="button" class="text-emerald-700 text-sm font-semibold">Обновить сравнение</button></div>
+ <div class="overflow-x-auto"><table class="w-full text-sm text-left"><thead class="text-slate-500"><tr><th class="p-2">Пользователь</th><th class="p-2">Вес, кг</th><th class="p-2">Талия, см</th><th class="p-2">Талия / рост</th><th class="p-2">Средние шаги</th><th class="p-2">Среднее питание</th><th class="p-2">Полных дней</th></tr></thead><tbody id="comparison-body"></tbody></table></div>
+ <p id="comparison-status" class="text-xs text-slate-500 mt-2">Сравнение использует выбранный период; последние размеры — на сегодня.</p>
+</div>
+<div id="metrics" class="grid grid-cols-2 lg:grid-cols-6 gap-3 mb-6" aria-live="polite"></div>
+<div class="grid lg:grid-cols-3 gap-6 items-start">
+ <div class="lg:col-span-2 space-y-6">
+  <section class="health-card"><h2 class="text-lg font-bold">Питание, расход и вес</h2><p id="energy-caption" class="text-xs text-slate-500 mt-1 mb-4"></p><div class="h-80"><canvas id="energy-chart" role="img" aria-label="График калорий и веса по дням"></canvas></div></section>
+  <section class="health-card">
+   <h2 class="text-lg font-bold">План питания на сегодня</h2><p id="plan-source" class="text-sm text-slate-500 mt-2"></p>
+   <div id="macro-targets" class="grid sm:grid-cols-4 gap-3 my-5"></div>
+   <p id="macro-actual" class="text-sm text-slate-600"></p>
+   <ul id="plan-warnings" class="text-sm text-amber-800 space-y-2 mt-4"></ul>
+   <p class="text-xs text-slate-500 mt-4">Стартовый ориентир для взрослых: Б/Ж/У = 25/30/45% энергии. При беременности, грудном вскармливании, заболеваниях или лечебной диете нужен индивидуальный план специалиста.</p>
+  </section>
+  <section class="health-card"><h2 class="text-lg font-bold">💪 Прогноз по проценту жира</h2>
+   <div id="abs-result" class="text-sm text-slate-600 space-y-2 mt-4" aria-live="polite">Нужен замер веса и процента жира.</div>
+   <p class="text-xs text-slate-500 mt-4">Это отдельная условная модель: сухая масса и заданный дефицит постоянны. Она не определяет внешний вид тела. Цель 10–12% не универсальна, особенно для женщин.</p>
+  </section>
+  <section class="health-card"><h2 class="text-lg font-bold">Изменение веса и формы</h2>
+   <div id="forecast-text" class="text-sm text-slate-600 space-y-2 my-4"></div>
+   <div class="h-64"><canvas id="forecast-chart" role="img" aria-label="Условный прогноз веса на четыре недели"></canvas></div>
+   <p class="text-xs text-slate-500 mt-3">Пунктир — сценарий при соблюдении выбранного питания, а не обещанный результат. Вода, мышцы и адаптация расхода меняют фактическую динамику. Талия не позволяет предсказать внешний вид или мышечную массу.</p>
+  </section>
+  <section class="health-card"><h2 class="text-lg font-bold">Динамика талии</h2><div class="h-56 mt-4"><canvas id="waist-chart" role="img" aria-label="Реальные замеры талии"></canvas></div>
+   <p class="text-xs text-slate-500 mt-3">Измеряйте в одинаковых условиях, посередине между нижним ребром и верхом тазовой кости, после обычного выдоха. Тренд требует трех дат замеров за срок от 14 дней. Пунктир — условное продолжение наблюдаемой динамики, без связи с калорийной моделью; появляется при свежем замере не старше 14 дней.</p>
+  </section>
+  <section class="health-card"><h2 class="text-lg font-bold mb-4">История замеров</h2>
+   <div class="overflow-x-auto"><table class="w-full text-sm text-left"><thead class="text-slate-500"><tr><th class="py-2">Дата</th><th>Рост, см</th><th>Талия, см</th><th>Вес, кг</th><th>Жир, %</th></tr></thead><tbody id="measurement-history"></tbody></table></div>
+   <p class="text-xs text-slate-500 mt-3">Показаны реальные замеры за выбранный период; для веса — последний замер каждого дня. В расчетах между датами используется последнее известное значение.</p>
+  </section>
+ </div>
+ <aside class="space-y-6">
+  <section class="health-card"><h2 class="text-lg font-bold mb-4">Добавить замер</h2>
+   <form id="measurement-form" class="health-form space-y-3">
+    <label>Дата замера<input type="date" name="date" required></label>
+    <label>Вес, кг<input type="number" name="weight_kg" min="20.01" max="400" step="0.01" placeholder="Например, 79.5"></label>
+    <label>Жир, % (вместе с весом)<input type="number" name="body_fat" min="0.1" max="99.9" step="0.1" placeholder="Например, 18"></label>
+    <label>Рост, см<input type="number" name="height_cm" min="50" max="260" step="0.1" placeholder="Например, 184"></label>
+    <label>Талия, см<input type="number" name="waist_cm" min="30" max="250" step="0.1" placeholder="Например, 86"></label>
+    <p class="text-xs text-slate-500">Введите хотя бы одно значение. Рост и талия за ту же дату обновят существующий замер. Вес сохраняется как новый замер.</p>
+    <button class="w-full" type="submit">Сохранить замер</button>
+   </form>
+  </section>
+  <section class="health-card"><h2 class="text-lg font-bold mb-4">Профиль и цель</h2>
+   <form id="profile-form" class="health-form space-y-3">
+    <label>Пол для формулы<select name="gender"><option value="">Не указан</option><option value="male">Мужской</option><option value="female">Женский</option></select></label>
+    <label>Дата рождения<input name="birth_date" type="date" min="1900-01-01"></label>
+    <label>Исходный рост, см<input name="height_cm" type="number" min="50" max="260" step="1"></label>
+    <p class="text-xs text-slate-500">Используется, пока нет датированных замеров роста.</p>
+    <label>Цель<select name="health_goal"><option value="maintain">Поддержание веса</option><option value="lose">Снижение веса</option></select></label>
+    <label>Дефицит от расхода, %<input name="deficit_percent" type="number" min="0" max="20" step="1" required></label>
+    <label>Целевой вес, кг (необязательно)<input name="goal_weight_kg" type="number" min="30" max="300" step="0.1"></label>
+    <label>Коэффициент активности при нехватке данных<select name="activity_factor"><option value="1.2">1.2 — низкая</option><option value="1.4">1.4 — небольшая</option><option value="1.6">1.6 — умеренная</option><option value="1.8">1.8 — высокая</option><option value="2">2.0 — очень высокая</option></select></label>
+    <button class="w-full" type="submit">Сохранить профиль и цель</button>
+    <hr class="my-4"><p class="font-semibold text-slate-700">Прогноз по проценту жира</p>
+    <label>Целевой жир, %<input name="target_body_fat" type="number" min="0.1" max="99.9" step="0.1" required></label>
+    <label>Заданный средний дефицит, ккал/день<input name="avg_daily_deficit" type="number" min="0" max="2000" step="1" required></label>
+    <p class="text-xs text-slate-500">Сохраняется той же кнопкой. Это отдельное допущение для модели состава тела, не измеренный дефицит из дневника.</p>
+   </form>
+  </section>
+  <section class="health-card text-xs text-slate-500 space-y-3"><h2 class="font-bold text-sm text-slate-700">Как читать расчеты</h2>
+   <p>ИМТ = вес / рост². Талия / рост — дополнительный ориентир распределения жира, не диагноз. Классификация для взрослых с ИМТ ниже 35.</p>
+   <p>Расход оценивается по последним 28 дням с полными данными либо по BMR × активности. Средние за период не включают текущий день. Отсутствие данных не считается нулем.</p>
+   <p><a class="text-emerald-700 underline" href="https://www.nice.org.uk/guidance/ng246/chapter/Identifying-and-assessing-overweight-obesity-and-central-adiposity" target="_blank" rel="noopener noreferrer">NICE: талия и рост</a> · <a class="text-emerald-700 underline" href="https://www.canada.ca/en/health-canada/services/food-nutrition/healthy-eating/dietary-reference-intakes/tables/reference-values-macronutrients.html" target="_blank" rel="noopener noreferrer">Диапазоны БЖУ</a></p>
+  </section>
+ </aside>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const view = document.getElementById('view-form'), selector = document.getElementById('profile-select');
+const profileForm = document.getElementById('profile-form'), measureForm = document.getElementById('measurement-form');
+let profiles = [], charts = {}, generation = 0, currentProfile = null;
+const fmt = (v, digits=1) => v === null || v === undefined ? '—' : Number(v).toLocaleString('ru-RU', {maximumFractionDigits: digits});
+const esc = escapeHtml;
+const num = input => input.value === '' ? null : Number(input.value);
+function scopeParams(id=selector.value) { const p = new URLSearchParams(); p.set('target_user_id', id); return p; }
+function viewParams(id=selector.value) {
+ const p = scopeParams(id); if(view.start.value) p.set('start_date', view.start.value); if(view.end.value) p.set('end_date', view.end.value); return p;
+}
+async function api(path, params, options={}) {
+ const resp = await fetch('/api/health/' + path + (params ? '?' + params : ''), options);
+ const data = await resp.json();
+ if(!resp.ok) throw new Error(typeof data.detail === 'string' ? data.detail : Array.isArray(data.detail) ? data.detail.map(d=>d.msg).join('; ') : 'Не удалось выполнить запрос');
+ return data;
+}
+function chart(id, config) { if(charts[id]) charts[id].destroy(); charts[id] = new Chart(document.getElementById(id), config); }
+function resetView() {
+ for(const id of Object.keys(charts)) {charts[id].destroy(); delete charts[id];}
+ for(const id of ['metrics','macro-targets','measurement-history','forecast-text','plan-warnings']) document.getElementById(id).replaceChildren();
+ document.getElementById('macro-actual').textContent = ''; document.getElementById('plan-source').textContent = '';
+ document.getElementById('abs-result').textContent='Загрузка прогноза…';
+}
+function fillProfile(p) {
+ currentProfile = p.id;
+ for(const key of ['gender','birth_date','height_cm','health_goal','deficit_percent','goal_weight_kg','activity_factor','target_body_fat','avg_daily_deficit']) profileForm.elements[key].value = p[key] ?? '';
+}
+function render(data) {
+ const s=data.summary, p=data.plan, a=s.averages;
+ fillProfile(data.profile);
+ view.start.value=s.start_date; view.end.value=s.end_date;
+ measureForm.date.value=p.as_of; measureForm.date.max=p.as_of; profileForm.birth_date.max=p.as_of;
+ document.getElementById('page-status').textContent=`${data.profile.name} · ${s.start_date} — ${s.end_date} · ${s.timezone}. План и последние размеры — на ${p.as_of}.`;
+ const metrics=[['Вес сейчас',fmt(p.weight_kg)+' кг'],['Рост',fmt(p.height_cm)+' см'],['Талия',fmt(p.waist_cm)+' см'],['ИМТ',fmt(p.bmi)],['Талия / рост',fmt(p.waist_height_ratio,3)],['Средние шаги',fmt(a.steps,0)]];
+ document.getElementById('metrics').innerHTML=metrics.map(([label,value])=>`<div class="health-card"><p class="text-xs text-slate-500">${esc(label)}</p><p class="health-metric">${esc(value)}</p></div>`).join('');
+ document.getElementById('energy-caption').textContent=`Полных дней: ${s.complete_days} из ${s.days.length}. Средний баланс: ${fmt(a.balance,0)} ккал/день. Питание: ${s.sample_days.calories} дн.; расход: ${s.sample_days.tdee} дн.`;
+ chart('energy-chart',{type:'bar',data:{labels:s.days.map(d=>d.date),datasets:[
+  {label:'Съедено, ккал',data:s.days.map(d=>d.calories),backgroundColor:'#fb7185',yAxisID:'energy'},
+  {label:'Расчетный расход, ккал',data:s.days.map(d=>d.tdee),backgroundColor:'#34d399',yAxisID:'energy'},
+  {type:'line',label:'Известный вес, кг',data:s.days.map(d=>d.weight_kg),borderColor:'#6366f1',yAxisID:'weight',order:-1,pointRadius:2}
+ ]},options:{responsive:true,maintainAspectRatio:false,scales:{energy:{beginAtZero:true,title:{display:true,text:'ккал'}},weight:{position:'right',grid:{drawOnChartArea:false},title:{display:true,text:'кг'}}}}});
+ document.getElementById('plan-source').textContent=p.maintenance_source==='telemetry_28d' ? `Расход: ${fmt(p.maintenance_kcal,0)} ккал/день по ${data.plan.telemetry_days ?? 'полным'} дням последних 28 суток.` : p.maintenance_source ? `Расход: ${fmt(p.maintenance_kcal,0)} ккал/день по формуле и коэффициенту активности.` : 'Для плана заполните профиль и добавьте вес.';
+ const m=p.macros;
+ document.getElementById('macro-targets').innerHTML=[['Калории',fmt(p.target_calories,0)+' ккал'],['Белки',fmt(m?.protein_g)+' г'],['Жиры',fmt(m?.fat_g)+' г'],['Углеводы',fmt(m?.carbs_g)+' г']].map(([label,value])=>`<div class="bg-emerald-50 rounded-xl p-3"><p class="text-xs text-emerald-800">${label}</p><p class="font-bold text-xl mt-2">${esc(value)}</p></div>`).join('');
+ document.getElementById('macro-actual').textContent=`Фактически в среднем за выбранный период: ${fmt(a.calories,0)} ккал · Б ${fmt(a.protein)} / Ж ${fmt(a.fat)} / У ${fmt(a.carbs)} г (${s.sample_days.calories} дн.).`;
+ document.getElementById('plan-warnings').innerHTML=p.warnings.map(w=>`<li>• ${esc(w)}</li>`).join('');
+ const trend=(v,unit)=>v===null?'недостаточно замеров':`${v>0?'+':''}${fmt(v,2)} ${unit}`;
+ document.getElementById('forecast-text').innerHTML=[
+  `Талия / рост: ${fmt(p.waist_height_ratio,3)}. ${p.waist_ratio_band || 'Недостаточно данных для интерпретации.'}`,
+  `Наблюдаемый тренд веса: ${trend(p.weight_trend_kg_week,'кг/нед.')}; талии: ${trend(p.waist_trend_cm_week,'см/нед.')} (замеры за 90 дней).`,
+  data.profile.health_goal==='maintain' ? 'Выбрано поддержание веса. Для сценария похудения измените цель в профиле.' :
+   p.planned_loss_kg_week===null ? 'Для сценария снижения веса пока недостаточно данных или нужно изменить цель.' :
+   `При выбранном питании: ${fmt(p.planned_loss_kg_week,2)} кг снижения в неделю. ${p.goal_weeks===null?'Срок до цели не рассчитан.':`Условный срок до целевого веса: ${fmt(p.goal_weeks)} нед.`}`
+ ].map(t=>`<p>${esc(t)}</p>`).join('');
+ chart('forecast-chart',{type:'line',data:{labels:p.forecast.map(d=>d.date),datasets:[{label:'Условный сценарий веса, кг',data:p.forecast.map(d=>d.weight_kg),borderColor:'#059669',borderDash:[6,5]}]},options:{responsive:true,maintainAspectRatio:false}});
+ const waist=data.measurements.filter(m=>m.waist_cm!==null);
+ const waistDates=[...new Set([...waist.map(m=>m.date),...p.waist_forecast.map(m=>m.date)])].sort();
+ const realWaist=new Map(waist.map(m=>[m.date,m.waist_cm])),projectedWaist=new Map(p.waist_forecast.map(m=>[m.date,m.waist_cm]));
+ chart('waist-chart',{type:'line',data:{labels:waistDates,datasets:[
+  {label:'Замер талии, см',data:waistDates.map(d=>realWaist.get(d)??null),borderColor:'#0d9488',pointRadius:4,spanGaps:true},
+  {label:'Если тренд сохранится, см',data:waistDates.map(d=>projectedWaist.get(d)??null),borderColor:'#94a3b8',borderDash:[5,5],spanGaps:true}
+ ]},options:{responsive:true,maintainAspectRatio:false}});
+ const history=new Map(); for(const m of data.measurements) history.set(m.date,{...m});
+ for(const w of data.weights) history.set(w.date,{...(history.get(w.date)||{date:w.date}),weight_kg:w.weight_kg,body_fat:w.body_fat});
+ const rows=[...history.values()].sort((a,b)=>b.date.localeCompare(a.date));
+ document.getElementById('measurement-history').innerHTML=rows.length?rows.map(r=>`<tr class="border-t border-slate-100"><td class="py-3">${esc(r.date)}</td><td>${fmt(r.height_cm)}</td><td>${fmt(r.waist_cm)}</td><td>${fmt(r.weight_kg,2)}</td><td>${fmt(r.body_fat)}</td></tr>`).join(''):'<tr><td colspan="5" class="py-5 text-slate-500">За выбранный период замеров нет.</td></tr>';
+}
+function renderAbs(r) {
+ const lines=[];
+ if(r.status==='missing_metrics')lines.push('Добавьте вес вместе с процентом жира — вручную или через Home Assistant.');
+ else {
+  lines.push(`Исходный замер: ${fmt(r.current_weight,2)} кг · ${fmt(r.current_body_fat)}% жира (${r.metric_at?.slice(0,10)||'дата неизвестна'}).`);
+  lines.push(`Цель: ${fmt(r.target_body_fat)}% · Расчетный вес: ${fmt(r.target_weight,2)} кг. Жировой массы к снижению по модели: ${fmt(r.fat_to_lose,2)} кг.`);
+  if(r.status==='achieved')lines.push('Цель уже достигнута по указанному проценту жира.');
+  else if(r.status==='no_deficit')lines.push('Дата не рассчитывается: заданный дефицит не положителен.');
+  else if(r.status==='horizon_exceeded')lines.push('Срок выходит за поддерживаемый календарный диапазон.');
+  else lines.push(`При заданном дефиците ${fmt(r.avg_daily_deficit,0)} ккал/день: ${fmt(r.days_left,0)} дней. Условная дата: ${r.target_date}.`);
+ }
+ lines.push(...r.warnings);
+ document.getElementById('abs-result').innerHTML=lines.map(t=>`<p>${esc(t)}</p>`).join('');
+}
+async function loadSelected() {
+ const token=++generation; resetView(); currentProfile=null;
+ document.getElementById('page-status').textContent='Загрузка выбранного профиля…';
+ profileForm.querySelector('button').disabled=true; measureForm.querySelector('button').disabled=true;
+ try {const id=selector.value; const data=await api('dashboard',viewParams(id)); if(token!==generation)return; render(data);
+  try {const response=await fetch('/api/v1/health/forecast-abs?'+new URLSearchParams({user_id:id}));
+   if(!response.ok)throw new Error('Не удалось загрузить прогноз'); const result=await response.json();if(token===generation)renderAbs(result);
+  }catch(err){if(token===generation)document.getElementById('abs-result').textContent=err.message;}}
+ catch(err){if(token===generation)document.getElementById('page-status').textContent=err.message;}
+ finally{if(token===generation){profileForm.querySelector('button').disabled=currentProfile===null; measureForm.querySelector('button').disabled=currentProfile===null;}}
+}
+async function compare() {
+ const token=generation, params=profiles.map(p=>({profile:p,params:viewParams(p.id)}));
+ document.getElementById('comparison-status').textContent='Загрузка сравнения…'; document.getElementById('comparison-body').replaceChildren();
+ const results=await Promise.allSettled(params.map(async item=>({profile:item.profile,data:await api('dashboard',item.params)})));
+ if(token!==generation)return;
+ document.getElementById('comparison-body').innerHTML=results.map((r,i)=>{
+  if(r.status!=='fulfilled')return `<tr><td class="p-2">${esc(params[i].profile.name)}</td><td colspan="6">Не удалось загрузить</td></tr>`;
+  const {profile,data}=r.value,p=data.plan,s=data.summary; return `<tr class="border-t"><td class="p-2 font-semibold">${esc(profile.name)}</td><td class="p-2">${fmt(p.weight_kg)}</td><td class="p-2">${fmt(p.waist_cm)}</td><td class="p-2">${fmt(p.waist_height_ratio,3)}</td><td class="p-2">${fmt(s.averages.steps,0)}</td><td class="p-2">${fmt(s.averages.calories,0)} ккал</td><td class="p-2">${s.complete_days}/${s.days.length}</td></tr>`;
+ }).join('');
+ document.getElementById('comparison-status').textContent='Выбранный период; последние размеры на сегодня. Персональные цели рассчитываются отдельно.';
+}
+selector.addEventListener('change',async()=>{await loadSelected(); if(profiles.length>1)await compare();});
+view.addEventListener('submit',async e=>{e.preventDefault();await loadSelected();if(profiles.length>1)await compare();});
+document.getElementById('compare-button').addEventListener('click',compare);
+async function submitForm(form,path,body) {
+ const id=currentProfile; if(id===null)return;
+ const button=form.querySelector('button');button.disabled=true;
+ try{await api(path,scopeParams(id),{method:path==='profile'?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  showToast('Сохранено');if(path==='measurements')form.reset();if(Number(selector.value)===id){await loadSelected();if(profiles.length>1)await compare();}}
+ catch(err){showToast(err.message,'error');}finally{button.disabled=currentProfile===null;}
+}
+profileForm.addEventListener('submit',e=>{e.preventDefault();submitForm(profileForm,'profile',{
+ gender:profileForm.gender.value||null,birth_date:profileForm.birth_date.value||null,height_cm:num(profileForm.height_cm),
+ health_goal:profileForm.health_goal.value,deficit_percent:num(profileForm.deficit_percent),goal_weight_kg:num(profileForm.goal_weight_kg),activity_factor:num(profileForm.activity_factor),target_body_fat:num(profileForm.target_body_fat),avg_daily_deficit:num(profileForm.avg_daily_deficit)});});
+measureForm.addEventListener('submit',async e=>{e.preventDefault();await submitForm(measureForm,'measurements',{
+ date:measureForm.date.value,height_cm:num(measureForm.height_cm),waist_cm:num(measureForm.waist_cm),weight_kg:num(measureForm.weight_kg),body_fat:num(measureForm.body_fat)});});
+(async()=>{try{
+ profiles=await api('profiles');const me=await fetch('/api/users/me').then(r=>r.json());
+ selector.replaceChildren();for(const p of profiles){const option=document.createElement('option');option.value=p.id;option.textContent=p.name;selector.appendChild(option);}
+ if(profiles.some(p=>p.id===me.id))selector.value=me.id;
+ if(profiles.length>1)document.getElementById('comparison-section').classList.remove('hidden');
+ await loadSelected();if(profiles.length>1)await compare();
+}catch(err){document.getElementById('page-status').textContent=err.message;}})();
+</script>
+{% endblock %}

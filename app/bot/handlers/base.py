@@ -1,17 +1,17 @@
-from datetime import datetime, timedelta
 from html import escape
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
+from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
-from app.bot.keyboards import BTN_REPORT, BTN_WEB, build_main_menu
+from app.bot.keyboards import BTN_WEB, build_main_menu
+from app.bot.keyboards.reply import BTN_SETTINGS
+from app.bot.keyboards.inline import get_settings_kb
 from app.core.config import settings
 from app.core.security import create_login_token, get_telegram_user, LOGIN_LINK_EXPIRE_MINUTES
-from app.models import ROLE_ADMIN, Category, Transaction, User
+from app.models import ROLE_ADMIN, User
 from app.finance.services.categorizer import seed_default_categories
-from app.finance.services.reports import format_report, summarize_transactions
 
 router = Router(name="base_router")
 
@@ -30,12 +30,23 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int) -> User:
 
 @router.message(CommandStart())
 @router.message(Command("help"))
-async def cmd_start_help(message: Message, session: AsyncSession) -> None:
+@router.message(F.text == BTN_SETTINGS)
+async def cmd_start_help(message: Message, session: AsyncSession, state: FSMContext = None) -> None:
     if not message.from_user:
         return
 
     user = await get_or_create_user(session, message.from_user.id)
+    if state is not None:
+        await state.clear()
     await seed_default_categories(session)
+
+    if (message.text or '').split(' ',1)[0].split('@',1)[0] == '/start':
+        await message.answer(
+            f'👋 <b>{escape(user.name)}, добро пожаловать в Life OS!</b>\n'
+            'Выберите раздел кнопками внизу. Финансы и здоровье поддерживают отчеты с графиками за выбранный период.\n\n'
+            'Выписку банка или брокера можно просто отправить файлом в этот чат.',
+            parse_mode='HTML',reply_markup=build_main_menu(user.role))
+        return
 
     text = (
         f"👋 <b>Привет, {escape(user.name)}! Это Life OS — семейные финансы и здоровье.</b>\n\n"
@@ -44,7 +55,7 @@ async def cmd_start_help(message: Message, session: AsyncSession) -> None:
         "от <b>СберБанка, Альфа-Банка или Т-Банка</b> (включая накопительные счета), "
         "либо файл брокерского отчета (<code>.csv</code>, <code>.xlsx</code>, <code>.pdf</code>).\n\n"
         "📋 <b>Доступные команды:</b>\n"
-        "• /report — Чистый доход, расходы и их структура за 30 дней\n"
+        "• /report — Выбрать период финансового отчета\n"
         "• /add — Добавить операцию вручную (наличные или любая карта)\n"
         "• /cash — Баланс наличных и последние операции\n"
         "• /add_deposit — Добавить вклад или накопительный счёт\n"
@@ -54,6 +65,10 @@ async def cmd_start_help(message: Message, session: AsyncSession) -> None:
         "• /portfolio — Инвестиционная аналитика (MOEX) и ребалансировка\n"
         "• /export_portfolio — Скачать PDF-сводку портфеля для нейросетей\n"
         "• /weight — Последние замеры веса\n"
+        "• /activity — Шаги и активные калории за сегодня\n"
+        "• /stats — Отчет здоровья за 7 завершенных дней\n"
+        "• /abs_forecast — Условная дата достижения целевого процента жира\n"
+        "• /workout — План тренировок на сегодня и отметка выполнения\n"
         "• /link_fatsecret — Привязать FatSecret (питание)\n"
         "• /nutrition — КБЖУ за сегодня\n"
         "• /unlink_fatsecret — Отвязать FatSecret\n"
@@ -63,40 +78,7 @@ async def cmd_start_help(message: Message, session: AsyncSession) -> None:
     if user.role == ROLE_ADMIN:
         text += "\n\n👑 <b>Администратор:</b>\n• /admin_stats — Аналитика пользователей (общая сводка)"
     await message.answer(text, parse_mode="HTML", reply_markup=build_main_menu(user.role))
-
-
-@router.message(Command("report"))
-@router.message(F.text == BTN_REPORT)
-async def cmd_report(message: Message, session: AsyncSession) -> None:
-    """Выводит сводку доходов и расходов по категориям за последние 30 дней."""
-    if not message.from_user:
-        return
-
-    user = await get_or_create_user(session, message.from_user.id)
-    since_date = datetime.now() - timedelta(days=30)
-
-    stmt = (
-        select(
-            Category.name,
-            Transaction.amount,
-            Category.type,
-        )
-        .outerjoin(Category, Transaction.category_id == Category.id)
-        .where(
-            Transaction.user_id == user.id,
-            Transaction.date >= since_date,
-        )
-    )
-    rows = (await session.execute(stmt)).all()
-
-    if not rows:
-        await message.answer(
-            "📭 За последние 30 дней транзакций не найдено.\n"
-            "Отправьте мне PDF или CSV выписку из банка!"
-        )
-        return
-
-    await message.answer(format_report(summarize_transactions(rows)), parse_mode="HTML")
+    await message.answer('Дополнительные действия доступны кнопками:',reply_markup=get_settings_kb(user.role))
 
 
 @router.message(Command("web"))

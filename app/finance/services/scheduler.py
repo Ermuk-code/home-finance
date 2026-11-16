@@ -15,6 +15,8 @@ from app.core.config import settings
 from app.core.database import async_session_maker
 from app.health.fatsecret_client import is_configured as fatsecret_configured
 from app.health.nutrition_sync import sync_all_users
+from app.health.activity import send_activity_nudges
+from app.health.workouts import send_morning_workout_plan
 from app.models import Category, Deposit, Reminder, Transaction, User
 from app.finance.services.advisor import generate_smart_advice
 from app.finance.services.budget import check_category_limits
@@ -206,6 +208,12 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """Инициализирует и запускает AsyncIOScheduler с интервалом проверки 1 минута."""
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
+        send_morning_workout_plan,
+        trigger=CronTrigger(hour=8, minute=0, timezone=settings.ACTIVITY_TZ),
+        id='morning_workout_job', replace_existing=True, misfire_grace_time=1800,
+        coalesce=True, max_instances=1,
+    )
+    scheduler.add_job(
         check_reminders,
         trigger="interval",
         minutes=1,
@@ -221,6 +229,16 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True,
         misfire_grace_time=3600,
     )
+    if settings.ACTIVITY_NUDGE_ENABLED:
+        scheduler.add_job(
+            send_activity_nudges,
+            trigger=CronTrigger(hour=20, minute=0, timezone=settings.ACTIVITY_TZ),
+            id="activity_nudge_job",
+            replace_existing=True,
+            misfire_grace_time=1800,
+            coalesce=True,
+            max_instances=1,
+        )
     if fatsecret_configured():
         # Днём каждые 4 часа и итоги суток в 23:50 (с пушем «Итоги питания»)
         scheduler.add_job(

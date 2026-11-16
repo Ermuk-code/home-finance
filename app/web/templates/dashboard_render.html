@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Отчет Life OS</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#e2e8f0;font-family:Arial,DejaVu Sans,sans-serif;color:#0f172a}
+#report-card{width:1120px;margin:24px auto;background:white;padding:38px;border-radius:22px}
+header{background:#0f172a;color:white;border-radius:16px;padding:28px 30px}.brand{font-size:15px;letter-spacing:3px;color:#6ee7b7}h1{font-size:34px;margin:12px 0}header p{font-size:20px;margin:8px 0;color:#cbd5e1}
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:26px 0}.metric{border:1px solid #e2e8f0;border-radius:14px;padding:22px}.metric span{font-size:17px;color:#475569}.metric strong{display:block;font-size:29px;margin-top:10px}.charts{display:grid;grid-template-columns:1fr 1fr;gap:24px}.chart-card{border:1px solid #e2e8f0;border-radius:14px;padding:20px}h2{font-size:21px;margin:0 0 16px}.chart{height:340px}.note{font-size:16px;line-height:1.6;color:#475569;margin-top:24px}.emphasis{color:#047857}.negative{color:#be123c}.health .metrics{grid-template-columns:repeat(4,1fr)}
+</style>
+<script src="/static/vendor/chart.umd.min.js"></script></head>
+<body><main id="report-card" class="{{ payload.kind }}">
+<header><div class="brand">LIFE OS / ЛИЧНЫЙ ОТЧЕТ</div><h1>{{ 'Финансы' if payload.kind == 'finance' else 'Здоровье и питание' }} · {{ payload.name }}</h1><p>{{ payload.start_date }} — {{ payload.end_date }}</p></header>
+{% if payload.kind == 'finance' %}
+{% set s=payload.finance %}
+<div class="metrics"><div class="metric"><span>Чистые доходы</span><strong class="emphasis">{{ '{:,.0f}'.format(s.clean_income).replace(',', ' ') }} ₽</strong></div><div class="metric"><span>Чистые расходы</span><strong class="negative">{{ '{:,.0f}'.format(s.clean_expense).replace(',', ' ') }} ₽</strong></div><div class="metric"><span>Доходы − расходы</span><strong>{{ '{:,.0f}'.format(s.net).replace(',', ' ') }} ₽</strong></div></div>
+<div class="charts"><section class="chart-card"><h2>Расходы по категориям</h2><div class="chart"><canvas id="chart-a"></canvas></div></section><section class="chart-card"><h2>Динамика по дням, ₽</h2><div class="chart"><canvas id="chart-b"></canvas></div></section></div>
+<p class="note">Операций за период: <b>{{ s.transaction_count }}</b>. Переводы между собственными счетами исключены из чистых доходов и расходов. Возвраты уменьшают расходы. Пустой график означает отсутствие данных за период.</p>
+{% else %}
+{% set s=payload.health %}
+{% macro number(v) %}{{ '{:,.0f}'.format(v).replace(',', ' ') if v is not none else 'нет данных' }}{% endmacro %}
+<div class="metrics"><div class="metric"><span>Средние шаги</span><strong>{{ number(s.averages.steps) }}</strong></div><div class="metric"><span>Питание, ккал/день</span><strong>{{ number(s.averages.calories) }}</strong></div><div class="metric"><span>Расход, ккал/день</span><strong>{{ number(s.averages.tdee) }}</strong></div><div class="metric"><span>Баланс, ккал/день</span><strong>{{ number(s.averages.balance) }}</strong></div></div>
+<div class="charts"><section class="chart-card"><h2>Калории и известный вес</h2><div class="chart"><canvas id="chart-a"></canvas></div></section><section class="chart-card"><h2>Активность: шаги по дням</h2><div class="chart"><canvas id="chart-b"></canvas></div></section></div>
+<p class="note">Полных дней для расчета баланса: <b>{{ s.complete_days }}</b>. Текущий день и пропуски исключены из средних; на графике показаны доступные дневные значения. Вес переносится с последнего известного замера. Расход и баланс — расчетные оценки.</p>
+{% endif %}
+<p class="note">Часовой пояс: {{ payload.timezone }} · Данные только выбранного пользователя.</p>
+</main>
+<script>
+const data={{ payload|tojson }};
+Chart.defaults.animation=false;Chart.defaults.font.family='Arial, DejaVu Sans, sans-serif';Chart.defaults.font.size=15;Chart.defaults.color='#334155';
+const options={responsive:true,maintainAspectRatio:false,animation:false,plugins:{legend:{position:'bottom'}}};
+if(data.kind==='finance'){
+ const s=data.finance;
+ new Chart(document.getElementById('chart-a'),{type:'doughnut',data:{labels:s.categories.map(x=>x[0]),datasets:[{data:s.categories.map(x=>x[1]),backgroundColor:['#059669','#6366f1','#f59e0b','#fb7185','#0ea5e9','#a78bfa','#14b8a6','#64748b','#cbd5e1']}]},options});
+ new Chart(document.getElementById('chart-b'),{type:'bar',data:{labels:s.days.map(x=>x.date.slice(5)),datasets:[{label:'Доходы',data:s.days.map(x=>x.income),backgroundColor:'#34d399'},{label:'Расходы',data:s.days.map(x=>x.expense),backgroundColor:'#fb7185'}]},options:{...options,scales:{x:{ticks:{maxTicksLimit:10}},y:{beginAtZero:true}}}});
+}else{
+ const days=data.health.days;
+ new Chart(document.getElementById('chart-a'),{type:'bar',data:{labels:days.map(x=>x.date.slice(5)),datasets:[{label:'Съедено, ккал',data:days.map(x=>x.calories),backgroundColor:'#fb7185',yAxisID:'energy'},{label:'Расход, ккал',data:days.map(x=>x.tdee),backgroundColor:'#34d399',yAxisID:'energy'},{type:'line',label:'Вес, кг',data:days.map(x=>x.weight_kg),borderColor:'#6366f1',yAxisID:'weight',pointRadius:1,order:-1}]},options:{...options,scales:{x:{ticks:{maxTicksLimit:8}},energy:{beginAtZero:true},weight:{position:'right',grid:{drawOnChartArea:false}}}}});
+ new Chart(document.getElementById('chart-b'),{type:'bar',data:{labels:days.map(x=>x.date.slice(5)),datasets:[{label:'Шаги',data:days.map(x=>x.steps),backgroundColor:'#0d9488'}]},options:{...options,scales:{x:{ticks:{maxTicksLimit:8}},y:{beginAtZero:true}}}});
+}
+requestAnimationFrame(()=>requestAnimationFrame(()=>{document.documentElement.dataset.renderReady='true';}));
+</script></body></html>

@@ -1,6 +1,6 @@
 from decimal import Decimal
 from typing import Dict, List
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.models import Category
@@ -10,19 +10,18 @@ from app.models import Category
 BTN_REPORT = "📊 Отчёт"
 BTN_LIMITS = "🎯 Лимиты"
 BTN_WEIGHT = "⚖️ Вес"
+BTN_ACTIVITY = "🚶 Активность"
+BTN_HEALTH_STATS = "📈 Отчет здоровья за неделю"
+BTN_ABS_FORECAST = "💪 Прогноз пресса"
+BTN_WORKOUT = '🏋️ Тренировка на сегодня'
 BTN_WEB = "🌐 Веб-панель"
 BTN_ADMIN_STATS = "👥 Аналитика пользователей"
 
 
 def build_main_menu(role: str) -> ReplyKeyboardMarkup:
     """Контекстное меню: пользователь видит свои финансы и здоровье, у admin добавляется общая аналитика."""
-    rows = [
-        [KeyboardButton(text=BTN_REPORT), KeyboardButton(text=BTN_LIMITS)],
-        [KeyboardButton(text=BTN_WEIGHT), KeyboardButton(text=BTN_WEB)],
-    ]
-    if role == "admin":
-        rows.append([KeyboardButton(text=BTN_ADMIN_STATS)])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+    from app.bot.keyboards.reply import get_main_menu
+    return get_main_menu()
 
 
 def build_categories_keyboard(

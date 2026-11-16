@@ -1,5 +1,7 @@
 from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,6 +34,20 @@ class Settings(BaseSettings):
     HEALTH_WEBHOOK_TOKEN: Optional[str] = None
     # Присылать admin-у уведомление «партнёр взвесился» (без значения веса), когда вес пришёл не от admin
     WEIGHT_ADMIN_DIGEST: bool = False
+
+    # Суточная активность и вечерние напоминания (локальное время семьи).
+    ACTIVITY_TZ: str = "Europe/Moscow"
+    ACTIVITY_NUDGE_ENABLED: bool = False
+    ACTIVITY_NUDGE_STEPS: int = Field(default=5000, gt=0, le=2147483647)
+
+    @field_validator("ACTIVITY_TZ")
+    @classmethod
+    def _validate_activity_tz(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("ACTIVITY_TZ должен быть часовым поясом IANA, например Europe/Moscow") from exc
+        return value
 
     # FatSecret Platform API (OAuth 1.0a): Consumer Key / Shared Secret из developer console.
     # Пусто — интеграция выключена. Пользовательские методы (food_entries.get) работают только по OAuth 1.0a.

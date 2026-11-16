@@ -1,28 +1,101 @@
 """Здоровье: вес, питание, активность. Данные привязаны к users.id и фильтруются по DataScope."""
 import logging
 import secrets
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from html import escape
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.database import get_async_session
 from app.core.security import DataScope, get_current_user, get_scope
 from app.health import fatsecret_client
+from app.health.activity import local_today, upsert_activity
+from app.health.analytics import HealthAnalytics
 from app.health.nutrition_sync import sync_user
-from app.health.schemas import WeightCreateSchema, WeightWebhookPayload
-from app.models import ROLE_ADMIN, ROLES, ActivityLog, DailyNutrition, User, WeightLog
+from app.health.schemas import ActivityWebhookPayload, WeightCreateSchema, WeightWebhookPayload
+from app.health.schemas import WorkoutCreate, WorkoutRead
+from app.health.workouts import complete_workout, find_workout
+from app.models import ROLE_ADMIN, ROLES, ActivityLog, DailyNutrition, User, WeightLog, Workout, WorkoutExercise
 from app.notifications.sender import send_telegram_message
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/health", tags=["Health"])
+
+
+@router.get('/workouts', response_model=list[WorkoutRead])
+async def list_workouts(start_date: Optional[date] = Query(default=None), end_date: Optional[date] = Query(default=None),
+                        scope: DataScope = Depends(get_scope), session: AsyncSession = Depends(get_async_session)):
+    today = local_today()
+    start = start_date or (end_date - timedelta(days=6) if end_date else today - timedelta(days=today.weekday()))
+    end = end_date or start + timedelta(days=6)
+    if end < start or (end - start).days > 365:
+        raise HTTPException(422, 'Период должен содержать от 1 до 366 дней')
+    stmt = scope.apply(select(Workout).where(Workout.date.between(start, end)), Workout)
+    return (await session.execute(stmt.options(selectinload(Workout.exercises)).order_by(Workout.date, Workout.id))).scalars().all()
+
+
+@router.get('/workouts/next', response_model=Optional[WorkoutRead])
+async def next_workout(scope: DataScope = Depends(get_scope), session: AsyncSession = Depends(get_async_session)):
+    stmt = scope.apply(select(Workout).where(Workout.date >= local_today(), Workout.is_completed.is_(False)), Workout)
+    return (await session.execute(stmt.options(selectinload(Workout.exercises)).order_by(Workout.date, Workout.id).limit(1))).scalar_one_or_none()
+
+
+@router.post('/workouts', response_model=WorkoutRead, status_code=201)
+async def create_workout(payload: WorkoutCreate, scope: DataScope = Depends(get_scope),
+                         session: AsyncSession = Depends(get_async_session)):
+    if scope.filter_id is None:
+        raise HTTPException(400, 'Выберите один профиль для создания тренировки')
+    workout = Workout(user_id=scope.owner_id, date=payload.date, title=payload.title,
+                      exercises=[WorkoutExercise(**e.model_dump()) for e in payload.exercises])
+    session.add(workout)
+    await session.commit()
+    return workout
+
+
+@router.patch('/workouts/{workout_id}/complete', response_model=WorkoutRead)
+async def mark_workout_complete(workout_id: int = Path(gt=0, le=2147483647), scope: DataScope = Depends(get_scope),
+                                session: AsyncSession = Depends(get_async_session)):
+    workout, _ = await complete_workout(session, workout_id, scope)
+    if workout is None:
+        raise HTTPException(404, 'Тренировка не найдена')
+    return workout
+
+
+@router.delete('/workouts/{workout_id}', status_code=204)
+async def delete_workout(workout_id: int = Path(gt=0, le=2147483647), scope: DataScope = Depends(get_scope),
+                         session: AsyncSession = Depends(get_async_session)):
+    workout = await find_workout(session, workout_id, scope)
+    if workout is None:
+        raise HTTPException(404, 'Тренировка не найдена')
+    await session.delete(workout)
+    await session.commit()
+
+
+@router.get("/summary")
+async def health_summary(
+    start_date: Optional[date] = Query(default=None),
+    end_date: Optional[date] = Query(default=None),
+    scope: DataScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_async_session),
+) -> Dict[str, Any]:
+    if scope.filter_id is None:
+        raise HTTPException(status_code=400, detail="Выберите один профиль: расчеты индивидуальны.")
+    end = end_date or local_today()
+    start = start_date or end - timedelta(days=6)
+    try:
+        return await HealthAnalytics(session).get_summary(scope.owner_id, start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def _serialize_weight(w: WeightLog) -> Dict[str, Any]:
@@ -31,6 +104,7 @@ def _serialize_weight(w: WeightLog) -> Dict[str, Any]:
         "user_id": w.user_id,
         "weight_kg": float(w.weight_kg),
         "bmi": float(w.bmi) if w.bmi is not None else None,
+        "body_fat": float(w.body_fat) if w.body_fat is not None else None,
         "timestamp": w.timestamp.isoformat(),
     }
 
@@ -43,6 +117,7 @@ async def _save_weight(session: AsyncSession, user_id: int, payload: WeightCreat
         user_id=user_id,
         weight_kg=payload.weight_kg.quantize(Decimal("0.01")),
         bmi=payload.bmi.quantize(Decimal("0.1")) if payload.bmi is not None else None,
+        body_fat=payload.body_fat,
         timestamp=ts,
     )
     session.add(log)
@@ -116,6 +191,22 @@ async def list_activity(
     ]
 
 
+@router.get("/activity/today", dependencies=[Depends(get_current_user)])
+async def activity_today(
+    scope: DataScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_async_session),
+) -> Dict[str, Any]:
+    """Итоги сегодня; отсутствие телеметрии отличается от нулевой активности."""
+    day = local_today()
+    stmt = scope.apply(
+        select(func.count(ActivityLog.id), func.sum(ActivityLog.steps), func.sum(ActivityLog.active_calories))
+        .where(ActivityLog.date == day),
+        ActivityLog,
+    )
+    count, steps, calories = (await session.execute(stmt)).one()
+    return {"date": day.isoformat(), "profiles_count": count, "steps": steps, "active_calories": calories}
+
+
 # ---------------------------------------------------------------------------
 # Вебхук Home Assistant
 # ---------------------------------------------------------------------------
@@ -123,7 +214,7 @@ def _check_webhook_token(token: Optional[str]) -> None:
     expected = settings.HEALTH_WEBHOOK_TOKEN
     if not expected:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Вебхуки отключены: не задан HEALTH_WEBHOOK_TOKEN.")
-    if not token or not secrets.compare_digest(token, expected):
+    if not token or not secrets.compare_digest(token.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный токен вебхука.")
 
 
@@ -153,6 +244,22 @@ async def _resolve_profile(session: AsyncSession, alias: str) -> User:
         if user:
             return user
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Профиль «{alias}» не найден.")
+
+
+@router.post("/webhook/activity", status_code=status.HTTP_200_OK)
+async def activity_webhook(
+    payload: ActivityWebhookPayload,
+    x_webhook_token: Optional[str] = Header(default=None),
+    session: AsyncSession = Depends(get_async_session),
+) -> Dict[str, Any]:
+    """Home Assistant присылает накопительные шаги и активные ккал за текущий день."""
+    _check_webhook_token(x_webhook_token)
+    user = await _resolve_profile(session, payload.profile_alias)
+    log = await upsert_activity(session, user.id, local_today(), payload.steps, payload.active_calories)
+    return {
+        "status": "ok", "id": log.id, "user_id": log.user_id, "date": log.date.isoformat(),
+        "steps": log.steps, "active_calories": log.active_calories,
+    }
 
 
 @router.post("/webhook/weight", status_code=status.HTTP_200_OK)

@@ -1,0 +1,54 @@
+# Добавьте элемент списка в automations.yaml (или удалите начальный '-' для YAML-редактора одной автоматизации).
+# Замените сущности: Android — Health Connect Daily Steps; iOS — Apple Health Steps.
+# Обычный Android Steps считает с перезагрузки, а iOS Pedometer — только шаги телефона.
+- id: life_os_daily_activity
+  alias: "Life OS — активность телефонов"
+  mode: single
+  trigger:
+    - platform: time_pattern
+      hours: "/2"
+      minutes: "0"
+      seconds: "0"
+    # Обновление перед серверным напоминанием в 20:00.
+    - platform: time
+      at: "19:55:00"
+    - platform: time
+      at: "23:50:00"
+  condition:
+    # В полночь сенсоры могут ещё содержать вчерашний итог.
+    - condition: template
+      value_template: "{{ now().hour != 0 }}"
+  action:
+    - repeat:
+        for_each:
+          - profile: admin
+            steps_entity: sensor.vlad_health_connect_daily_steps
+            # Пусто: передавать 0 ккал. Укажите сущность только с СУТОЧНЫМИ активными ккал.
+            calories_entity: ""
+          - profile: user
+            steps_entity: sensor.vika_health_steps
+            calories_entity: sensor.vika_active_energy
+        sequence:
+          - variables:
+              steps_state: "{{ states(repeat.item.steps_entity) }}"
+              calories_state: "{{ states(repeat.item.calories_entity) if repeat.item.calories_entity else '0' }}"
+          - if:
+              - condition: template
+                value_template: >-
+                  {% set sensor = states[repeat.item.steps_entity] %}
+                  {{ is_number(steps_state) and steps_state | float >= 0
+                     and sensor is defined and sensor is not none
+                     and as_local(sensor.last_reported).date() == now().date() }}
+            then:
+              - service: rest_command.send_activity_to_life_os
+                # Сбой одного телефона не мешает отправке второго.
+                continue_on_error: true
+                data:
+                  profile: "{{ repeat.item.profile }}"
+                  steps: "{{ steps_state | int }}"
+                  calories: >-
+                    {% set sensor = states[repeat.item.calories_entity] if repeat.item.calories_entity else none %}
+                    {{ calories_state | float(0) | int
+                       if is_number(calories_state) and calories_state | float >= 0
+                       and sensor is not none and sensor is defined
+                       and as_local(sensor.last_reported).date() == now().date() else 0 }}

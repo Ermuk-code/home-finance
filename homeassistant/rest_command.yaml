@@ -1,4 +1,6 @@
-# Добавьте в configuration.yaml (или подключите через `rest_command: !include rest_command.yaml`)
+# Содержимое добавьте/объедините с rest_command в configuration.yaml.
+# Для !include packages используйте этот файл целиком; для rest_command: !include
+# вынесите команды в отдельный файл БЕЗ внешнего ключа rest_command.
 # Токен храните в secrets.yaml:  life_os_webhook_token: "<HEALTH_WEBHOOK_TOKEN из .env>"
 rest_command:
   send_weight_to_life_os:
@@ -8,4 +10,18 @@ rest_command:
     headers:
       content-type: "application/json"
       x-webhook-token: !secret life_os_webhook_token
-    payload: '{"profile_alias": "{{ profile }}", "weight_kg": {{ weight }}}'
+    # body_fat — необязательный процент жира ИЗ ТОГО ЖЕ замера весов.
+    payload: >-
+      {% set measurement = {"profile_alias": profile, "weight_kg": weight | float} %}
+      {{ dict(measurement, body_fat=body_fat | float) | to_json
+         if body_fat is defined and is_number(body_fat) else measurement | to_json }}
+  send_activity_to_life_os:
+    url: "http://192.168.1.22:8000/api/health/webhook/activity"
+    method: POST
+    timeout: 10
+    content_type: "application/json"
+    headers:
+      X-Webhook-Token: !secret life_os_webhook_token
+    payload: >-
+      {{ {"profile_alias": profile, "steps": steps | int,
+          "active_calories": calories | default(0) | int(0)} | to_json }}

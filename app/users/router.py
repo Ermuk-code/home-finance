@@ -1,5 +1,6 @@
 """Пользователи и права: профиль, белый список Telegram (управляет только admin)."""
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from typing import Literal
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -12,6 +13,7 @@ from app.core.database import get_async_session
 from app.core.security import get_current_user, is_admin
 from app.finance.services.reports import summarize_transactions
 from app.models import ROLE_ADMIN, ROLE_USER, ROLES, Category, Transaction, User, WeightLog
+from app.health.activity import local_today
 
 router = APIRouter(prefix="/api/users", tags=["Users & Roles"])
 
@@ -33,7 +35,20 @@ class UserCreateSchema(BaseModel):
         return _validate_role(value)
 
 
-class UserUpdateSchema(BaseModel):
+class PhysicalParamsSchema(BaseModel):
+    gender: Optional[Literal["male", "female"]] = None
+    height_cm: Optional[int] = Field(default=None, strict=True, ge=50, le=260)
+    birth_date: Optional[date] = None
+
+    @field_validator("birth_date")
+    @classmethod
+    def _check_birth(cls, value: Optional[date]) -> Optional[date]:
+        if value and (value > local_today() or value < date(1900, 1, 1)):
+            raise ValueError("Дата рождения должна быть между 1900-01-01 и сегодняшним днем")
+        return value
+
+
+class UserUpdateSchema(PhysicalParamsSchema):
     name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     role: Optional[str] = None
 
@@ -53,6 +68,9 @@ def _serialize(user: User) -> Dict[str, Any]:
         "telegram_id": user.telegram_id,
         "name": user.name,
         "role": user.role,
+        "gender": user.gender,
+        "height_cm": user.height_cm,
+        "birth_date": user.birth_date.isoformat() if user.birth_date else None,
         "is_owner": _is_owner(user),
         "created_at": user.created_at.isoformat() if user.created_at else None,
     }
@@ -101,6 +119,19 @@ async def users_overview(
             }
         )
     return result
+
+
+@router.patch("/me/physical")
+async def update_my_physical(
+    payload: PhysicalParamsSchema,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+) -> Dict[str, Any]:
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(current_user, key, value)
+    await session.commit()
+    await session.refresh(current_user)
+    return _serialize(current_user)
 
 
 @router.get("", dependencies=[Depends(is_admin)])
@@ -162,6 +193,9 @@ async def update_user(
         user.role = payload.role
     if payload.name is not None:
         user.name = payload.name.strip()
+    for key in ("gender", "height_cm", "birth_date"):
+        if key in payload.model_fields_set:
+            setattr(user, key, getattr(payload, key))
 
     await session.commit()
     await session.refresh(user)

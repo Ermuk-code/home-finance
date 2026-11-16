@@ -6,7 +6,7 @@ import app.models  # noqa: F401
 
 USER_OWNED_TABLES = [
     "transactions", "assets", "reminders", "deposits", "vacations", "income_rules", "category_limits",
-    "weight_logs", "daily_nutrition", "activity_logs",
+    "weight_logs", "daily_nutrition", "activity_logs", "body_measurements", "workouts",
 ]
 
 
