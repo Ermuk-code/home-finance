@@ -20,6 +20,8 @@ class ParsedTransaction(BaseModel):
     description: str
     bank_name: str
     is_parsed_automatically: bool = Field(default=True)
+    external_id: Optional[str] = Field(default=None, max_length=200)
+    account_key: str = Field(default="", max_length=100)
 
 
 class StatementParserError(Exception):
@@ -139,6 +141,13 @@ class BankStatementParser:
                 raise StatementParserError(f"Неизвестный тип банка: {bank}")
             transactions = parser_fn(full_text)
             if transactions:
+                accounts = set(re.findall(
+                    r"(?:номер\s+(?:лицевого\s+)?сч[её]та|сч[её]т\s*№)\s*[:№]?\s*(\d{20})(?!\d)",
+                    full_text[:1500], flags=re.IGNORECASE,
+                ))
+                if len(accounts) == 1:
+                    for transaction in transactions:
+                        transaction.account_key = next(iter(accounts))
                 return transactions
             logger.info("Парсер банка '%s' не нашёл операций, пробуем следующий вариант.", bank)
 
@@ -447,7 +456,8 @@ class BankStatementParser:
         for encoding in ("utf-8-sig", "utf-8", "cp1251", "windows-1251"):
             for sep in (";", ",", "\t"):
                 try:
-                    candidate = pd.read_csv(io.BytesIO(file_bytes), encoding=encoding, sep=sep)
+                    candidate = pd.read_csv(io.BytesIO(file_bytes), encoding=encoding, sep=sep,
+                                            dtype=str, keep_default_na=False)
                     if candidate.shape[1] >= 3:
                         df = candidate
                         break
@@ -474,6 +484,13 @@ class BankStatementParser:
             (orig for low, orig in cols_lower.items() if "описание" in low or "назначение" in low or "категория" in low),
             None,
         )
+        # Only explicitly named operation IDs are identities. «Код операции» is often an operation TYPE.
+        id_col = next((cols_lower[name] for name in (
+            "идентификатор операции", "номер операции", "референс проводки", "transaction id", "operation id"
+        ) if name in cols_lower), None)
+        account_col = next((cols_lower[name] for name in (
+            "номер счета", "номер счёта", "счет", "счёт", "account", "account number"
+        ) if name in cols_lower), None)
 
         if not (date_col and amount_col and desc_col):
             raise StatementParserError(
@@ -481,7 +498,8 @@ class BankStatementParser:
             )
 
         # Определяем имя банка
-        bank_name = bank_hint or "Банк (CSV)"
+        bank_name = {"sber": "СберБанк", "alfa": "Альфа-Банк", "tbank": "Т-Банк"}.get(
+            (bank_hint or "").lower(), bank_hint or "Банк (CSV)")
         if "номер карты" in cols_lower and "кэшбэк" in cols_lower:
             bank_name = "Т-Банк"
         elif "код операции" in cols_lower or "референс проводки" in cols_lower:
@@ -518,6 +536,8 @@ class BankStatementParser:
                     amount=amount,
                     description=raw_desc,
                     bank_name=bank_name,
+                    external_id=str(row[id_col]).strip() or None if id_col else None,
+                    account_key=str(row[account_col]).strip() if account_col else "",
                 )
             )
 

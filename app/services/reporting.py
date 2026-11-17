@@ -12,6 +12,7 @@ from app.finance.services.reports import fmt_money, summarize_transactions
 from app.health.activity import local_today
 from app.health.analytics import HealthAnalytics
 from app.models import Category, Transaction, User
+from app.services.health_report_text import aggregate_health, format_health_lines, previous_period
 
 
 def validate_period(start: date, end: date) -> None:
@@ -27,6 +28,9 @@ def report_period(period: str, today: date | None = None) -> tuple[date, date]:
     today = today or local_today()
     if period == 'day':
         return today, today
+    if period == 'week':
+        # Completed days only: today's health diary is still partial.
+        return today-timedelta(days=7), today-timedelta(days=1)
     if period == 'month':
         return today.replace(day=1), today
     if period == 'year':
@@ -46,12 +50,25 @@ def parse_custom_period(text: str) -> tuple[date, date]:
     return start, end
 
 
-async def build_report_data(session: AsyncSession, user: User, kind: str, start: date, end: date) -> dict:
+async def build_report_data(session: AsyncSession, user: User, kind: str, start: date, end: date, period: str | None = None) -> dict:
     validate_period(start, end)
     result = {'kind': kind, 'name': user.name, 'start_date': start.isoformat(), 'end_date': end.isoformat(),
               'timezone': settings.ACTIVITY_TZ}
     if kind == 'health':
-        result['health'] = await HealthAnalytics(session).get_summary(user.id, start, end)
+        service=HealthAnalytics(session)
+        result['health'] = await service.get_summary(user.id, start, end)
+        mode=('day' if start==end else 'custom') if period in (None,'custom') else period
+        if mode not in ('day','week','month','year','custom'):
+            raise ValueError('Неизвестный период отчета.')
+        context={'period':mode,'current':aggregate_health(result['health'],mode),'timezone':settings.ACTIVITY_TZ,
+                 'previous':None,'comparison_label':{'day':'пред. день','week':'пред. период','month':'пред. месяц','custom':'пред. период','year':''}[mode]}
+        # Screenshot rendering needs only the current chart data. The bot explicitly requests comparisons.
+        prior=previous_period(start,end,mode) if period else None
+        if prior:
+            prior_start,prior_end=prior
+            previous=await service.get_summary(user.id,prior_start,prior_end)
+            context.update(previous=aggregate_health(previous,mode),previous_start=str(prior_start),previous_end=str(prior_end))
+        result['health_text']=context
         return result
     if kind != 'finance':
         raise ValueError('Неизвестный тип отчета.')
@@ -91,16 +108,7 @@ def format_period_summary(data: dict) -> str:
                   f"Итог: <b>{fmt_money(s['net'])} ₽</b>", f"Операций: {s['transaction_count']}.",
                   'Переводы между своими счетами исключены из итогов.']
     else:
-        s = data['health']
-        avg, w = s['averages'], s['weight_change']
-        def fmt(value):
-            return f'{value:,.0f}'.replace(',', ' ') if value is not None else 'нет данных'
-        if w['start_kg'] is not None:
-            lines.append(f"Вес: {w['start_kg']:.1f} → {w['end_kg']:.1f} кг ({w['delta_kg']:+.1f} кг).")
-        else:
-            lines.append('Вес: нет данных.')
-        lines += [f"Средние шаги: {fmt(avg['steps'])}/день.", f"Среднее питание: {fmt(avg['calories'])} ккал/день.",
-                  f"Расчетный расход: {fmt(avg['tdee'])} ккал/день.",
-                  f"Средний баланс: {fmt(avg['balance'])} ккал/день.",
-                  f"Полных дней для баланса: {s['complete_days']}. Сегодня и пропуски исключены из средних."]
+        context=data.get('health_text') or {'period':'custom','current':aggregate_health(data['health'],'custom'),
+            'previous':None,'comparison_label':'пред. период','timezone':settings.ACTIVITY_TZ}
+        lines.extend(format_health_lines(context))
     return '\n'.join(lines)

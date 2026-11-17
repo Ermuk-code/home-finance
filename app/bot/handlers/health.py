@@ -13,7 +13,6 @@ from app.bot.handlers.base import get_or_create_user
 from app.bot.keyboards import BTN_ABS_FORECAST, BTN_ACTIVITY, BTN_HEALTH_STATS, BTN_WEIGHT
 from app.core.security import create_access_token
 from app.health.abs_forecast import AbsForecastResponse, format_abs_forecast
-from app.health.analytics import HealthAnalytics, format_weekly_summary
 from app.health.activity import local_today
 from app.models import ActivityLog, WeightLog
 
@@ -45,8 +44,8 @@ async def cmd_stats(message: Message, session: AsyncSession) -> None:
         return
     user = await get_or_create_user(session, message.from_user.id)
     end = local_today() - timedelta(days=1)
-    summary = await HealthAnalytics(session).get_summary(user.id, end - timedelta(days=6), end)
-    await message.answer(format_weekly_summary(summary), parse_mode="HTML")
+    from app.bot.handlers.reports import send_report
+    await send_report(message,user,session,'health',end-timedelta(days=6),end,period='week')
 
 
 @router.message(Command("activity"))
@@ -61,8 +60,10 @@ async def cmd_activity(message: Message, session: AsyncSession) -> None:
     if log is None:
         await message.answer("🚶 За сегодня данных об активности пока нет. Ожидаем синхронизацию Home Assistant.")
         return
+    total_line = f"Общий расход (HA): <b>{log.total_calories:.2f} ккал</b>\n" if log.total_calories is not None else ""
     await message.answer(
         f"🚶 <b>Активность за сегодня</b>\nШаги: <b>{log.steps}</b>\n"
+        + total_line +
         f"Активные калории: <b>{log.active_calories} ккал</b>\n"
         "По последней синхронизации Home Assistant; 0 ккал может означать отсутствие данных.",
         parse_mode="HTML",

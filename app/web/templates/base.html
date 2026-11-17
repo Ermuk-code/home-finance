@@ -9,27 +9,37 @@
 </head>
 <body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
 
-    <!-- Навигационная панель -->
-    <nav class="bg-slate-900 text-white shadow-md">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-between min-h-16 items-center flex-wrap gap-2 py-2">
-                <div class="flex flex-wrap items-center gap-2">
-                    <a href="/" class="text-lg font-bold tracking-tight text-emerald-400">💰 Life OS</a>
-<a href="/health-dashboard" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'health' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Здоровье</a>
-                    <a href="/workouts" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'workouts' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Тренировки</a>
-                    <div class="hidden xl:flex flex-wrap gap-1">
-                        <a href="/" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'dashboard' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Дашборд</a>
-                        <a href="/transactions" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'transactions' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Транзакции</a>
-                        <a href="/income" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'income' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Доходы</a>
-                        <a href="/upload" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'upload' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Загрузка файлов</a>
-                        <a href="/reminders" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'reminders' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Календарь</a>
-                        <a href="/limits" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'limits' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Лимиты</a>
-                        {% if current_user and current_user.role == 'admin' %}
-                        <a href="/users" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'users' %}bg-slate-800 text-emerald-400{% else %}hover:bg-slate-800{% endif %}">Доступ (TG)</a>
-                        {% endif %}
-                    </div>
-                </div>
-                <div class="flex items-center space-x-3">
+    {% set active_section = 'health' if active_page in ['health', 'workouts'] else 'time' if active_page == 'time' else 'finance' %}
+    {% set sections = [
+        ('finance', '/', 'Финансы'),
+        ('health', '/health-dashboard', 'Здоровье'),
+        ('time', '/time', 'Время')
+    ] %}
+    {% set finance_pages = [
+        ('dashboard', '/', 'Дашборд'),
+        ('transactions', '/transactions', 'Транзакции'),
+        ('income', '/income', 'Доходы'),
+        ('upload', '/upload', 'Загрузка файлов'),
+        ('reminders', '/reminders', 'Календарь'),
+        ('limits', '/limits', 'Лимиты')
+    ] %}
+    {% set health_pages = [
+        ('health', '/health-dashboard', 'Обзор здоровья'),
+        ('workouts', '/workouts', 'Тренировки')
+    ] %}
+    {% set section_titles = {'finance': 'Финансы', 'health': 'Здоровье', 'time': 'Время'} %}
+
+    <header class="bg-slate-900 text-white shadow-md">
+        <div class="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex min-h-16 items-center justify-between flex-wrap gap-x-6 gap-y-3 py-3">
+                <a href="/" class="text-lg font-bold tracking-tight text-emerald-400">💰 Life OS</a>
+                <nav aria-label="Основные разделы" class="order-last flex w-full gap-1 sm:order-none sm:w-auto">
+                    {% for section, href, label in sections %}
+                    <a href="{{ href }}" {% if active_section == section %}aria-current="page"{% endif %}
+                       class="flex-1 text-center px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 {% if active_section == section %}bg-slate-800 text-emerald-400{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">{{ label }}</a>
+                    {% endfor %}
+                </nav>
+                <div class="flex items-center gap-3">
                     {% if current_user %}
                     <span class="text-sm text-slate-300">{{ current_user.name }}
                         <span class="ml-1 px-1.5 py-0.5 rounded text-xs {% if current_user.role == 'admin' %}bg-indigo-500/20 text-indigo-300{% else %}bg-emerald-500/20 text-emerald-300{% endif %}">{{ current_user.role }}</span>
@@ -41,17 +51,45 @@
                 </div>
             </div>
         </div>
-    </nav>
+    </header>
 
-    <!-- Контейнер для всплывающих уведомлений (Toast) -->
-    <div id="toast-container" class="fixed bottom-5 right-5 z-50 space-y-2"></div>
+    <div id="toast-container" class="fixed bottom-5 right-5 z-50 space-y-2" role="status" aria-live="polite"></div>
 
-    <!-- Основной контент страницы -->
-    <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {% block content %}{% endblock %}
-    </main>
+    <div class="flex-grow w-full max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8 lg:flex lg:items-start lg:gap-8">
+        <aside class="mb-6 lg:mb-0 lg:w-52 lg:shrink-0 lg:sticky lg:top-6" aria-label="Меню раздела">
+            <button type="button" id="section-menu-toggle" aria-controls="section-menu" aria-expanded="false"
+                    class="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold lg:hidden">
+                <span>{{ section_titles[active_section] }} · Меню</span>
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <nav id="section-menu" aria-label="{{ section_titles[active_section] }}" class="hidden mt-2 rounded-xl border border-slate-200 bg-white p-3 lg:block lg:mt-0">
+                <p class="px-3 pt-2 pb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">{{ section_titles[active_section] }}</p>
+                <ul class="space-y-1">
+                    {% set pages = health_pages if active_section == 'health' else [('time', '/time', 'Обзор')] if active_section == 'time' else finance_pages %}
+                    {% if active_section == 'finance' and current_user and current_user.role == 'admin' %}
+                        {% set pages = pages + [('users', '/users', 'Доступ (TG)')] %}
+                    {% endif %}
+                    {% for page, href, label in pages %}
+                    <li><a href="{{ href }}" {% if active_page == page %}aria-current="page"{% endif %}
+                           class="block rounded-lg px-3 py-2.5 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600 {% if active_page == page %}bg-emerald-50 text-emerald-700{% else %}text-slate-600 hover:bg-slate-100 hover:text-slate-900{% endif %}">{{ label }}</a></li>
+                    {% endfor %}
+                </ul>
+            </nav>
+        </aside>
+        <main class="min-w-0 flex-1">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
 
     <script>
+        const sectionMenuToggle = document.getElementById('section-menu-toggle');
+        const sectionMenu = document.getElementById('section-menu');
+        sectionMenuToggle.addEventListener('click', () => {
+            const expanded = sectionMenuToggle.getAttribute('aria-expanded') === 'true';
+            sectionMenuToggle.setAttribute('aria-expanded', String(!expanded));
+            sectionMenu.classList.toggle('hidden', expanded);
+        });
+
         // Экранирование для вставки данных в innerHTML / шаблонные строки. Любые данные из API
         // (названия, описания, тикеры) вставлять только через escapeHtml.
         function escapeHtml(v) {

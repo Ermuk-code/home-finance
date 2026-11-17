@@ -155,6 +155,7 @@ async def get_transactions(
     category_id: Optional[int] = Query(default=None),
     bank_name: Optional[str] = Query(default=None),
     search: Optional[str] = Query(default=None),
+    import_id: Optional[int] = Query(default=None, ge=1),
     scope: DataScope = Depends(get_scope),
     session: AsyncSession = Depends(get_async_session),
 ) -> Dict[str, Any]:
@@ -182,6 +183,10 @@ async def get_transactions(
         stmt = stmt.where(Transaction.description.ilike(f"%{search}%"))
         count_stmt = count_stmt.where(Transaction.description.ilike(f"%{search}%"))
 
+    if import_id is not None:
+        stmt = stmt.where(Transaction.import_id == import_id)
+        count_stmt = count_stmt.where(Transaction.import_id == import_id)
+
     total = (await session.execute(count_stmt)).scalar() or 0
     stmt = stmt.order_by(Transaction.date.desc(), Transaction.id.desc()).limit(limit).offset(offset)
     rows = (await session.execute(stmt)).scalars().all()
@@ -194,6 +199,9 @@ async def get_transactions(
             "amount": float(tx.amount),
             "description": tx.description,
             "bank_name": tx.bank_name,
+            "import_id": tx.import_id,
+            "account_key": tx.account_key,
+            "external_id": tx.external_id,
             "category_id": tx.category_id,
             "category_name": tx.category.name if tx.category else None,
             "is_parsed_automatically": tx.is_parsed_automatically,

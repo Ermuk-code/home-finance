@@ -20,6 +20,7 @@ class ActivityWebhookPayload(BaseModel):
     profile_alias: str = Field(..., min_length=1, max_length=100)
     steps: int = Field(..., strict=True, ge=0, le=2147483647)
     active_calories: int = Field(default=0, strict=True, ge=0, le=2147483647)
+    total_calories: Optional[Decimal] = Field(default=None, ge=0, le=2147483647, decimal_places=2)
 
     @field_validator("profile_alias")
     @classmethod

@@ -1,74 +1,181 @@
 {% extends "base.html" %}
-{% block title %}Загрузка файлов — Домашние Финансы{% endblock %}
-
+{% block title %}Загрузка выписок — Life OS{% endblock %}
 {% block content %}
-<div class="max-w-2xl mx-auto">
-    <h1 class="text-2xl font-bold text-slate-800 mb-2">📥 Загрузка выписок и брокерских отчетов</h1>
-    <p class="text-sm text-slate-500 mb-6">
-        Поддерживаются PDF и CSV выписки от <b>СберБанка, Альфа-Банка и Т-Банка</b> (включая накопительные счета), а также брокерские отчеты (CSV, XLSX, PDF).
-    </p>
-
+<div class="max-w-5xl mx-auto">
+    <h1 class="text-2xl font-bold mb-2">📥 Загрузка выписок</h1>
+    <p class="text-sm text-slate-500 mb-6">Выписки СберБанка, Альфа-Банка и Т-Банка (PDF/CSV): сначала проверка, затем сохранение.
+        Брокерские отчёты (CSV/XLSX/PDF) сохраняются сразу. Максимальный размер — 20 МБ.</p>
     <form id="upload-form" class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
-        <div>
-            <label class="block text-sm font-medium text-slate-700 mb-2">Выберите файл (.pdf, .csv, .xlsx)</label>
-            <input type="file" name="file" accept=".pdf,.csv,.xlsx,.xls" required class="block w-full text-sm text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100">
+        <label class="block text-sm font-medium">Файл
+            <input type="file" name="file" accept=".pdf,.csv,.xlsx,.xls" required class="block mt-2 w-full text-sm">
+        </label>
+        <div class="grid sm:grid-cols-2 gap-4">
+            <label class="block text-sm font-medium">Банк (если не определился автоматически)
+                <select name="bank_hint" class="block w-full mt-2 p-2 border rounded-lg">
+                    <option value="">Определить автоматически</option><option value="sber">СберБанк</option>
+                    <option value="alfa">Альфа-Банк</option><option value="tbank">Т-Банк</option>
+                </select>
+            </label>
+            <label class="block text-sm font-medium">Счёт / постоянная метка счёта
+                <input name="account_key" maxlength="100" placeholder="Например, Сбер — основная карта"
+                    class="block w-full mt-2 p-2 border rounded-lg">
+            </label>
         </div>
-        <button type="submit" id="upload-btn" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg transition">
-            Загрузить и распарсить
-        </button>
+        <p class="text-xs text-slate-500">Если поле пустое, используем номер счёта из файла, когда он есть.
+            Для повторных выписок одного счёта используйте одну и ту же метку, для разных счетов — разные.
+            Номер операции учитывается, только если он есть в выписке.</p>
+        <button type="submit" id="upload-btn" class="bg-emerald-600 text-white font-semibold px-5 py-2.5 rounded-lg disabled:opacity-50">Проверить файл</button>
     </form>
-
-    <!-- Блок результата -->
-    <div id="upload-result" class="hidden mt-6 bg-white p-6 rounded-xl shadow-sm border border-emerald-300"></div>
+    <section id="upload-result" class="hidden mt-6 bg-white p-6 rounded-xl border border-emerald-300" aria-live="polite"></section>
+    <section class="mt-8 bg-white p-6 rounded-xl border border-slate-200">
+        <h2 class="text-lg font-bold mb-2">История загрузок выписок</h2>
+        <p class="text-xs text-slate-500 mb-4">Отмена удаляет импортированные операции, если они не используются другой сохранённой загрузкой.
+            Ручные и старые операции не удаляются. Правки категории импортированной операции не защищают её от отмены.</p>
+        <div id="import-history" class="text-sm text-slate-500">Загрузка истории…</div>
+    </section>
 </div>
 {% endblock %}
-
 {% block scripts %}
 <script>
-    document.getElementById('upload-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const btn = document.getElementById('upload-btn');
-        const resBox = document.getElementById('upload-result');
-        btn.disabled = true;
-        btn.innerText = '⏳ Обработка файла...';
-        resBox.classList.add('hidden');
+let activeImport = null;
+const resultBox = document.getElementById('upload-result');
+const statusNames = {pending: 'Ожидает проверки', committed: 'Сохранена', reverted: 'Отменена'};
+const actionNames = {new: 'Новая', review: 'Проверьте совпадение', duplicate: 'Повтор по номеру операции',
+    duplicate_in_file: 'Повтор номера внутри файла', conflict: 'Номер операции совпал, данные отличаются'};
+const dateText = value => new Date(value).toLocaleString('ru-RU', {timeZone: 'Europe/Moscow'});
 
-        const formData = new FormData(e.target);
-        try {
-            const resp = await fetch('/api/upload', { method: 'POST', body: formData });
-            const data = await resp.json();
-            if (!resp.ok) throw new Error(data.detail || 'Ошибка при разборе файла');
+async function requestJson(url, options = {}) {
+    const response = await fetch(url, options);
+    if (response.status === 401) { window.location.href = '/login'; throw new Error('Войдите в веб-панель.'); }
+    let data;
+    try { data = await response.json(); } catch { throw new Error('Сервер вернул некорректный ответ.'); }
+    if (!response.ok) {
+        const err = new Error(typeof data.detail === 'string' ? data.detail : 'Не удалось выполнить запрос.');
+        err.status = response.status;
+        throw err;
+    }
+    return data;
+}
 
-            if (data.file_type === 'bank_statement') {
-                resBox.innerHTML = `
-                    <h3 class="text-lg font-bold text-emerald-700 mb-2">✅ Банковская выписка успешно загружена!</h3>
-                    <ul class="text-sm space-y-1 text-slate-700">
-                        <li>🏦 Банк: <b>${escapeHtml(data.bank_name)}</b></li>
-                        <li>📄 Найдено операций в файле: <b>${data.total_found}</b></li>
-                        <li>➕ Добавлено новых: <b>${data.saved_new}</b> (дубликатов пропущено: ${data.skipped_duplicates})</li>
-                        <li>🏷 Автоматически распределено по категориям: <b>${data.categorized_automatically}</b></li>
-                        <li>❓ Требуют ручной разметки: <b>${data.uncategorized}</b></li>
-                    </ul>
-                    <a href="/transactions?unassigned=1" class="inline-block mt-4 text-sm font-semibold text-emerald-600 hover:underline">Перейти к разметке неизвестных операций →</a>
-                `;
-            } else {
-                resBox.innerHTML = `
-                    <h3 class="text-lg font-bold text-indigo-700 mb-2">📈 Брокерский отчет обработан!</h3>
-                    <ul class="text-sm space-y-1 text-slate-700">
-                        <li>➕ Новых бумаг добавлено: <b>${data.assets_added}</b></li>
-                        <li>🔄 Существующих позиций обновлено: <b>${data.assets_updated}</b></li>
-                        <li>🧾 Тикеры: <code>${escapeHtml(data.tickers.join(', '))}</code></li>
-                    </ul>
-                `;
-            }
-            resBox.classList.remove('hidden');
-            showToast('Файл успешно обработан!');
-        } catch (err) {
-            showToast(err.message, 'error');
-        } finally {
-            btn.disabled = false;
-            btn.innerText = 'Загрузить и распарсить';
+async function loadHistory() {
+    const history = document.getElementById('import-history');
+    try {
+        const rows = await requestJson('/api/imports');
+        history.innerHTML = rows.length ? rows.map(row => `<div class="flex flex-wrap justify-between items-center gap-3 py-3 border-b">
+            <div><b>#${row.import_id} · ${escapeHtml(row.filename)}</b>
+                <div class="text-xs mt-1">${escapeHtml(dateText(row.created_at))} · ${escapeHtml(statusNames[row.status])}
+                    · добавлено ${row.saved_new}, пропущено ${row.skipped_duplicates}</div></div>
+            <button type="button" data-open="${row.import_id}" class="text-emerald-700 font-semibold">Открыть</button>
+        </div>`).join('') : 'Загрузок пока нет.';
+        history.querySelectorAll('[data-open]').forEach(btn => btn.addEventListener('click', () => openImport(Number(btn.dataset.open))));
+    } catch (err) { history.textContent = err.message; }
+}
+
+async function openImport(id) {
+    try { renderImport(await requestJson(`/api/imports/${id}`)); }
+    catch (err) { showToast(err.message, 'error'); }
+}
+
+function renderImport(data) {
+    activeImport = data;
+    resultBox.classList.remove('hidden');
+    const title = `<h2 class="text-lg font-bold">Выписка #${data.import_id} · ${escapeHtml(statusNames[data.status])}</h2>
+        <p class="text-sm text-slate-500 mt-2">${escapeHtml(data.filename)} · ${escapeHtml(data.bank_name)} · строк: ${data.total_found}</p>`;
+    if (data.status !== 'pending') {
+        resultBox.innerHTML = title + `<p class="mt-4">При сохранении добавлено: <b>${data.saved_new}</b>,
+            пропущено: <b>${data.skipped_duplicates}</b>, без категории: <b>${data.uncategorized}</b>.</p>
+            ${data.status === 'committed' ? `<p class="text-sm mt-2">Повторная отправка того же файла не добавляет операции.</p>
+                <a href="/transactions?import_id=${data.import_id}" class="block text-sm text-emerald-700 mt-3">Открыть добавленные операции →</a>
+                <button id="revert-import" class="mt-4 text-rose-700 font-semibold">Отменить эту загрузку</button>` : ''}`;
+        document.getElementById('revert-import')?.addEventListener('click', undoImport);
+        return;
+    }
+    const visible = data.rows.filter((row, i) => i < 100 || ['review', 'conflict'].includes(row.action));
+    resultBox.innerHTML = title + `<p class="mt-4 font-semibold">Операции ещё не сохранены.</p>
+        <p class="text-sm mt-2">Новых: ${data.new_count} · требуют проверки: ${data.review_count}
+            · точных повторов по номеру: ${data.duplicate_count} · конфликтов: ${data.conflict_count}</p>
+        ${data.warnings.map(w => `<p class="text-sm text-amber-800 mt-2">${escapeHtml(w)}</p>`).join('')}
+        <p class="text-sm text-slate-500 mt-3">Одинаковые покупки могут быть разными операциями. Для каждого спорного совпадения выберите действие.
+            Даты показаны по Москве. Без часового пояса в файле время считается московским.</p>
+        <form id="confirm-form">
+            <div class="overflow-x-auto mt-4"><table class="w-full text-sm text-left">
+                <thead><tr><th class="p-2">Строка / дата</th><th class="p-2">Операция</th><th class="p-2">Проверка</th></tr></thead>
+                <tbody>${visible.map(row => `<tr class="border-t align-top">
+                    <td class="p-2 whitespace-nowrap">${row.row_number}<br>${escapeHtml(dateText(row.date))}<br><b>${escapeHtml(row.amount)} ₽</b></td>
+                    <td class="p-2 break-words max-w-sm">${escapeHtml(row.description)}
+                        <div class="text-xs text-slate-500 mt-1">Счёт: ${escapeHtml(row.account_key || 'не указан')}
+                        ${row.external_id ? `<br>Номер операции: ${escapeHtml(row.external_id)}` : ''}</div></td>
+                    <td class="p-2 min-w-64"><b>${escapeHtml(actionNames[row.action])}</b>
+                        ${row.candidates.map(tx => `<div class="text-xs mt-2 p-2 bg-slate-50 rounded break-words">
+                            Уже в базе #${tx.id}: ${escapeHtml(dateText(tx.date))} · ${escapeHtml(tx.amount)} ₽<br>
+                            ${escapeHtml(tx.description)}<br>Счёт: ${escapeHtml(tx.account_key || 'не указан')}</div>`).join('')}
+                        ${['review', 'conflict'].includes(row.action) ? `<select required data-row="${row.row_number}" class="block w-full border rounded p-2 mt-2">
+                            <option value="">Выберите действие</option>
+                            ${row.action !== 'conflict' ? '<option value="add">Добавить как новую операцию</option>' : ''}
+                            <option value="skip">Пропустить эту строку</option></select>` : ''}</td>
+                </tr>`).join('')}</tbody></table></div>
+            ${visible.length < data.rows.length ? `<p class="text-xs text-slate-500 mt-2">Показано ${visible.length} из ${data.rows.length} строк; все спорные совпадения включены.</p>` : ''}
+            <div class="flex flex-wrap gap-4 mt-5">
+                <button id="confirm-import" type="submit" class="bg-emerald-600 text-white font-semibold px-5 py-2 rounded-lg disabled:opacity-50">Сохранить операции</button>
+                <button id="revert-import" type="button" class="text-rose-700 font-semibold">Отменить загрузку</button>
+            </div>
+        </form>`;
+    document.getElementById('confirm-form').addEventListener('submit', saveImport);
+    document.getElementById('revert-import').addEventListener('click', undoImport);
+}
+
+async function saveImport(event) {
+    event.preventDefault();
+    const btn = document.getElementById('confirm-import');
+    btn.disabled = true;
+    const data = activeImport;
+    const choices = Object.fromEntries(Array.from(resultBox.querySelectorAll('[data-row]'), el => [el.dataset.row, el.value]));
+    try {
+        const result = await requestJson(`/api/imports/${data.import_id}/confirm`, {method: 'POST',
+            headers: {'Content-Type': 'application/json'}, body: JSON.stringify({revision: data.revision, choices})});
+        renderImport(result);
+        showToast('Операции сохранены.');
+        await loadHistory();
+    } catch (err) {
+        showToast(err.message, 'error');
+        if (err.status === 409) await openImport(data.import_id);
+    } finally { btn.disabled = false; }
+}
+
+async function undoImport() {
+    const data = activeImport;
+    if (!confirm(data.status === 'pending' ? 'Отменить предпросмотр этой загрузки?' :
+        'Отменить загрузку? Импортированные ею операции будут удалены, если другая сохранённая загрузка их не использует. Ручные правки категорий этих операций тоже будут потеряны.')) return;
+    const btn = document.getElementById('revert-import');
+    btn.disabled = true;
+    try {
+        const result = await requestJson(`/api/imports/${data.import_id}/revert`, {method: 'POST'});
+        resultBox.textContent = `Загрузка #${data.import_id} отменена. Удалено операций: ${result.deleted_transactions}.`;
+        activeImport = null;
+        await loadHistory();
+    } catch (err) { showToast(err.message, 'error'); btn.disabled = false; }
+}
+
+document.getElementById('upload-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const btn = document.getElementById('upload-btn');
+    btn.disabled = true;
+    btn.textContent = 'Проверка файла…';
+    try {
+        const data = await requestJson('/api/upload', {method: 'POST', body: new FormData(event.target)});
+        if (data.file_type === 'bank_statement') renderImport(data);
+        else {
+            resultBox.classList.remove('hidden');
+            resultBox.innerHTML = `<h2 class="text-lg font-bold">📈 Брокерский отчёт сохранён</h2>
+                <p class="mt-3">Новых бумаг: ${data.assets_added}, обновлено: ${data.assets_updated}.</p>
+                <p class="text-sm mt-2">${escapeHtml(data.tickers.join(', '))}</p>`;
         }
-    });
+        await loadHistory();
+    } catch (err) { showToast(err.message, 'error'); }
+    finally { btn.disabled = false; btn.textContent = 'Проверить файл'; }
+});
+loadHistory();
+const initialId = new URLSearchParams(window.location.search).get('import_id');
+if (initialId && /^\d+$/.test(initialId)) openImport(Number(initialId));
 </script>
 {% endblock %}

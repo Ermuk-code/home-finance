@@ -23,11 +23,13 @@
         for_each:
           - profile: admin
             steps_entity: sensor.vlad_health_connect_daily_steps
-            # Пусто: передавать 0 ккал. Укажите сущность только с СУТОЧНЫМИ активными ккал.
-            calories_entity: ""
+            # Общий расход Android уже включает базовый обмен. Не выдавать за active!
+            calories_entity: sensor.cph2719_total_calories_burned
+            calories_type: total
           - profile: user
             steps_entity: sensor.vika_health_steps
             calories_entity: sensor.vika_active_energy
+            calories_type: active
         sequence:
           - variables:
               steps_state: "{{ states(repeat.item.steps_entity) }}"
@@ -46,9 +48,11 @@
                 data:
                   profile: "{{ repeat.item.profile }}"
                   steps: "{{ steps_state | int }}"
+                  calories_type: "{{ repeat.item.calories_type | default('active') }}"
                   calories: >-
                     {% set sensor = states[repeat.item.calories_entity] if repeat.item.calories_entity else none %}
-                    {{ calories_state | float(0) | int
+                    {{ calories_state | float(0) | round(2)
                        if is_number(calories_state) and calories_state | float >= 0
                        and sensor is not none and sensor is defined
-                       and as_local(sensor.last_reported).date() == now().date() else 0 }}
+                       and as_local(sensor.last_reported).date() == now().date()
+                       else (none if repeat.item.calories_type | default('active') == 'total' else 0) }}

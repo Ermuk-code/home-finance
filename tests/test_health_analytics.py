@@ -90,6 +90,31 @@ async def test_complete_week_math_and_no_writes(api, store):
 
 
 @pytest.mark.asyncio
+async def test_device_total_does_not_add_bmr_or_tef(api, store):
+    populate(store)
+    row = store.session.scalar(select(ActivityLog).where(ActivityLog.date == date(2026, 11, 15)))
+    row.total_calories = Decimal('1850.72')
+    row.active_calories = 0
+    store.session.commit()
+    result = (await api.get('/api/health/summary?start_date=2026-11-15&end_date=2026-11-15', headers=auth(1))).json()
+    day = result['days'][0]
+    assert day['bmr'] == 1805 and day['tef'] == 215
+    assert day['tdee'] == 1850.72 and day['balance'] == 299.28
+    assert day['expenditure_source'] == 'device_total' and not day['expenditure_uncertain']
+    assert day['activity_calories_uncertain'] and day['complete']
+    assert result['averages']['tdee'] == 1850.72
+
+
+@pytest.mark.asyncio
+async def test_total_without_physical_params_or_food_is_still_displayable(api, store):
+    store.session.add(ActivityLog(user_id=2, date=date(2026, 11, 15), steps=100, total_calories=Decimal('1200.25')))
+    store.session.commit()
+    day = (await api.get('/api/health/summary?start_date=2026-11-15&end_date=2026-11-15', headers=auth(2))).json()['days'][0]
+    assert day['tdee'] == 1200.25 and day['bmr'] is None and day['balance'] is None
+    assert not day['expenditure_uncertain']
+
+
+@pytest.mark.asyncio
 async def test_weight_asof_day_timezone_and_no_future_leak(api, store):
     populate(store)
     # 21:30 UTC is already next day in Moscow.
@@ -166,10 +191,12 @@ def test_invalid_physical(data):
 @pytest.mark.asyncio
 async def test_stats_own_user_and_seven_completed_days(api, store, monkeypatch):
     from app.bot.handlers import health
+    from app.bot.handlers import reports
     populate(store)
     monkeypatch.setattr(health, 'local_today', lambda: date(2026, 11, 16))
     message = SimpleNamespace(from_user=SimpleNamespace(id=222), answer=AsyncMock())
+    sender=AsyncMock()
+    monkeypatch.setattr(reports,'send_report',sender)
     await health.cmd_stats(message, store)
-    text = message.answer.call_args.args[0]
-    assert 'Вика' in text and '2026-11-09' in text and '2026-11-15' in text
-    assert 'нет данных' in text and '370' not in text
+    assert sender.call_args.args[1].id==2
+    assert sender.call_args.args[3:]==('health',date(2026,11,9),date(2026,11,15))

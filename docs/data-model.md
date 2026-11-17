@@ -39,6 +39,8 @@ users ─┬─< transactions >── categories ──< category_limits >──
 | `categories` | name (unique), type `income`/`expense`, keywords[], is_mandatory | Общий справочник (15 категорий сидируются автоматически) |
 | `category_limits` | user_id, category_id, monthly_limit; unique(user_id, category_id) | Персональные месячные лимиты |
 | `transactions` | user_id, category_id null, amount (±), description, date, bank_name, is_parsed_automatically | Операции. Доход > 0, расход < 0. Наличные — `bank_name = 'Наличные'` |
+| `statement_imports` | user_id, file_sha256, account_key, filename, bank_name, status, timestamps, counters | Загрузка выписки: pending / committed / reverted. Уникален активный файл в пределах пользователя и метки счёта |
+| `statement_import_rows` | import_id, row_number, date, amount, description, bank_name, account_key, external_id, transaction_id, outcome | Исходные разобранные строки и результат обработки; FK на операцию с SET NULL |
 | `assets` | user_id, ticker, asset_type `stock`/`bond`/`fund`, amount, average_buy_price null, isin, name | Позиции брокерского портфеля |
 | `deposits` | user_id, bank_name, title, amount, interest_rate, kind `deposit`/`savings`, opened_at, term_months, end_date, capitalization | Вклады и накопительные счета |
 | `reminders` | user_id, title, description, trigger_date, is_notified, recurrence, recurrence_every, recurrence_day, deposit_id | Напоминания (сейчас живут в финансовом домене) |
@@ -51,6 +53,12 @@ users ─┬─< transactions >── categories ──< category_limits >──
 | `weight_logs` | user_id, weight_kg numeric(5,2), bmi null, timestamp | Замеры веса (HA-вебхук или API) |
 | `daily_nutrition` | user_id, date, calories, protein, fat, carbs; unique(user_id, date) | Суточные итоги КБЖУ из FatSecret |
 | `activity_logs` | user_id, date, steps, active_calories; unique(user_id, date) | Активность — **таблица есть, но ничем не заполняется** |
+
+Миграция `9e0c3f6a2b71` (после `8d9b2a5f1e43`) добавляет историю импортов и поля происхождения
+`transactions.import_id`, `account_key`, `external_id`, `import_fingerprint`, `import_occurrence`.
+Уникальны `(user_id, import_fingerprint, import_occurrence)` и ненулевой банковский номер в пределах
+`(user_id, bank_name, account_key, external_id)`. У старых записей поля идентичности NULL: миграция их
+не удаляет и не объединяет. Подробности: [Импорт выписок](statement-imports.md).
 
 ## Миграции
 

@@ -23,8 +23,9 @@
 <p id="page-status" role="status" class="text-sm text-slate-500 mb-4">Загрузка профилей…</p>
 <div id="comparison-section" class="health-card mb-6 hidden">
  <div class="flex flex-wrap items-center justify-between gap-3 mb-3"><h2 class="font-bold text-lg">Сравнение пользователей</h2><button id="compare-button" type="button" class="text-emerald-700 text-sm font-semibold">Обновить сравнение</button></div>
- <div class="overflow-x-auto"><table class="w-full text-sm text-left"><thead class="text-slate-500"><tr><th class="p-2">Пользователь</th><th class="p-2">Вес, кг</th><th class="p-2">Талия, см</th><th class="p-2">Талия / рост</th><th class="p-2">Средние шаги</th><th class="p-2">Среднее питание</th><th class="p-2">Полных дней</th></tr></thead><tbody id="comparison-body"></tbody></table></div>
- <p id="comparison-status" class="text-xs text-slate-500 mt-2">Сравнение использует выбранный период; последние размеры — на сегодня.</p>
+ <div class="overflow-x-auto"><table class="w-full text-sm text-left"><thead class="text-slate-500"><tr><th class="p-2">Пользователь</th><th class="p-2">Вес, кг</th><th class="p-2">Талия, см</th><th class="p-2">Талия / рост</th><th class="p-2">Средние шаги</th><th class="p-2">Среднее питание, ккал/день</th><th class="p-2">Съедено сегодня, ккал</th><th class="p-2">Активные сегодня, ккал (HA)</th><th class="p-2">Расход сегодня, ккал</th><th class="p-2">Полных дней</th></tr></thead><tbody id="comparison-body"></tbody></table></div>
+ <p id="comparison-status" class="text-xs text-slate-500 mt-2">Загрузка сравнения…</p>
+ <p class="text-xs text-slate-500 mt-2">«Итог HA» — общий расход устройства по последней синхронизации, без прибавления базового обмена. «Расчёт» — базовый обмен за полные сутки + активные ккал + 10% съеденного. Прочерк — нет данных.</p>
 </div>
 <div id="metrics" class="grid grid-cols-2 lg:grid-cols-6 gap-3 mb-6" aria-live="polite"></div>
 <div class="grid lg:grid-cols-3 gap-6 items-start">
@@ -131,7 +132,7 @@ function render(data) {
  document.getElementById('energy-caption').textContent=`Полных дней: ${s.complete_days} из ${s.days.length}. Средний баланс: ${fmt(a.balance,0)} ккал/день. Питание: ${s.sample_days.calories} дн.; расход: ${s.sample_days.tdee} дн.`;
  chart('energy-chart',{type:'bar',data:{labels:s.days.map(d=>d.date),datasets:[
   {label:'Съедено, ккал',data:s.days.map(d=>d.calories),backgroundColor:'#fb7185',yAxisID:'energy'},
-  {label:'Расчетный расход, ккал',data:s.days.map(d=>d.tdee),backgroundColor:'#34d399',yAxisID:'energy'},
+  {label:'Расход (HA или расчёт), ккал',data:s.days.map(d=>d.expenditure_uncertain?null:d.tdee),backgroundColor:'#34d399',yAxisID:'energy'},
   {type:'line',label:'Известный вес, кг',data:s.days.map(d=>d.weight_kg),borderColor:'#6366f1',yAxisID:'weight',order:-1,pointRadius:2}
  ]},options:{responsive:true,maintainAspectRatio:false,scales:{energy:{beginAtZero:true,title:{display:true,text:'ккал'}},weight:{position:'right',grid:{drawOnChartArea:false},title:{display:true,text:'кг'}}}}});
  document.getElementById('plan-source').textContent=p.maintenance_source==='telemetry_28d' ? `Расход: ${fmt(p.maintenance_kcal,0)} ккал/день по ${data.plan.telemetry_days ?? 'полным'} дням последних 28 суток.` : p.maintenance_source ? `Расход: ${fmt(p.maintenance_kcal,0)} ккал/день по формуле и коэффициенту активности.` : 'Для плана заполните профиль и добавьте вес.';
@@ -191,10 +192,14 @@ async function compare() {
  const results=await Promise.allSettled(params.map(async item=>({profile:item.profile,data:await api('dashboard',item.params)})));
  if(token!==generation)return;
  document.getElementById('comparison-body').innerHTML=results.map((r,i)=>{
-  if(r.status!=='fulfilled')return `<tr><td class="p-2">${esc(params[i].profile.name)}</td><td colspan="6">Не удалось загрузить</td></tr>`;
-  const {profile,data}=r.value,p=data.plan,s=data.summary; return `<tr class="border-t"><td class="p-2 font-semibold">${esc(profile.name)}</td><td class="p-2">${fmt(p.weight_kg)}</td><td class="p-2">${fmt(p.waist_cm)}</td><td class="p-2">${fmt(p.waist_height_ratio,3)}</td><td class="p-2">${fmt(s.averages.steps,0)}</td><td class="p-2">${fmt(s.averages.calories,0)} ккал</td><td class="p-2">${s.complete_days}/${s.days.length}</td></tr>`;
+  if(r.status!=='fulfilled')return `<tr><td class="p-2">${esc(params[i].profile.name)}</td><td colspan="9">Не удалось загрузить</td></tr>`;
+  const {profile,data}=r.value,p=data.plan,s=data.summary,t=data.today;
+  const expenditure=t.expenditure_uncertain?null:t.tdee;
+  const source=expenditure==null?'':t.expenditure_source==='device_total'?'Итог HA':'Расчёт';
+  return `<tr class="border-t"><td class="p-2 font-semibold">${esc(profile.name)}</td><td class="p-2">${fmt(p.weight_kg)}</td><td class="p-2">${fmt(p.waist_cm)}</td><td class="p-2">${fmt(p.waist_height_ratio,3)}</td><td class="p-2">${fmt(s.averages.steps,0)}</td><td class="p-2">${fmt(s.averages.calories,0)}</td><td class="p-2">${fmt(t.calories,0)}</td><td class="p-2">${fmt(t.activity_calories_uncertain?null:t.active_calories,0)}</td><td class="p-2">${fmt(expenditure,2)}<span class="block text-xs text-slate-500">${source}</span></td><td class="p-2">${s.complete_days}/${s.days.length}</td></tr>`;
  }).join('');
- document.getElementById('comparison-status').textContent='Выбранный период; последние размеры на сегодня. Персональные цели рассчитываются отдельно.';
+ const first=results.find(r=>r.status==='fulfilled')?.value.data;
+ document.getElementById('comparison-status').textContent=first?`Средние — за выбранный период. Калории сегодня — ${first.today.date} (${first.summary.timezone}), по последней синхронизации. Сегодняшние сутки ещё не завершены.`:'Не удалось загрузить сравнение.';
 }
 selector.addEventListener('change',async()=>{await loadSelected(); if(profiles.length>1)await compare();});
 view.addEventListener('submit',async e=>{e.preventDefault();await loadSelected();if(profiles.length>1)await compare();});

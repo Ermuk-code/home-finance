@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.health import dashboard as dashboard_module
 from app.health.planning import build_plan, measurement_trend
-from app.models import BodyMeasurement, User, WeightLog
+from app.models import ActivityLog, BodyMeasurement, DailyNutrition, User, WeightLog
 from tests import test_health_analytics as fixtures
 from tests.test_activity import auth
 
@@ -28,6 +28,26 @@ async def test_dashboard_profile_visibility(api):
         body = {} if path == 'dashboard' else {'json': {'height_cm': 180, 'date': '2026-11-10'}}
         assert (await method('/api/health/'+path+'?target_user_id=1', headers=auth(2), **body)).status_code == 403
         assert (await method('/api/health/'+path+'?all_users=true', headers=auth(1), **body)).status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_comparison_today_separate_from_period_and_profile(api, store, monkeypatch):
+    monkeypatch.setattr(dashboard_module, 'local_today', lambda: date(2026, 11, 16))
+    populate(store)
+    store.session.add_all([
+        DailyNutrition(user_id=1, date=date(2026, 11, 16), calories=900),
+        ActivityLog(user_id=1, date=date(2026, 11, 16), steps=6202, total_calories=Decimal('1850.72')),
+        ActivityLog(user_id=2, date=date(2026, 11, 16), steps=3606, total_calories=Decimal('1300.50')),
+    ])
+    store.session.commit()
+    data = (await api.get('/api/health/dashboard?start_date=2026-11-10&end_date=2026-11-11', headers=auth(1))).json()
+    assert data['summary']['averages']['calories'] == 2150
+    assert data['today']['date'] == '2026-11-16'
+    assert data['today']['calories'] == 900 and data['today']['tdee'] == 1850.72
+    partner = (await api.get('/api/health/dashboard?target_user_id=2', headers=auth(1))).json()['today']
+    assert partner['tdee'] == 1300.50 and partner['calories'] is None
+    missing = (await api.get('/api/health/dashboard', headers=auth(3))).json()['today']
+    assert missing['calories'] is None and missing['tdee'] is None
 
 
 @pytest.mark.asyncio

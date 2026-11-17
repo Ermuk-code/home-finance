@@ -67,6 +67,8 @@ class ActivityLog(Base):
     date: Mapped[date] = mapped_column(Date, nullable=False)
     steps: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     active_calories: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Суточный итог устройства: уже включает базовый обмен, хранится отдельно от активных ккал.
+    total_calories: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
 
 
 class Workout(Base):

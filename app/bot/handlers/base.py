@@ -56,6 +56,7 @@ async def cmd_start_help(message: Message, session: AsyncSession, state: FSMCont
         "либо файл брокерского отчета (<code>.csv</code>, <code>.xlsx</code>, <code>.pdf</code>).\n\n"
         "📋 <b>Доступные команды:</b>\n"
         "• /report — Выбрать период финансового отчета\n"
+        "• /health_report — Выбрать период отчета здоровья с графиками\n"
         "• /add — Добавить операцию вручную (наличные или любая карта)\n"
         "• /cash — Баланс наличных и последние операции\n"
         "• /add_deposit — Добавить вклад или накопительный счёт\n"

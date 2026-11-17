@@ -178,6 +178,8 @@
         const search = document.getElementById('filter-search').value.trim();
 
         const params = new URLSearchParams({ limit: 150 });
+        const importId = new URLSearchParams(window.location.search).get('import_id');
+        if (importId && /^\d+$/.test(importId)) params.append('import_id', importId);
         if (unassigned) params.append('unassigned_only', 'true');
         if (search) params.append('search', search);
 
@@ -215,7 +217,10 @@
 
             tr.innerHTML = `
                 <td class="py-3 px-4 whitespace-nowrap text-slate-500">${dt}</td>
-                <td class="py-3 px-4 whitespace-nowrap"><span class="px-2 py-1 ${tx.bank_name === CASH_NAME ? 'bg-amber-100 text-amber-800' : 'bg-slate-100'} rounded text-xs font-medium">${esc(tx.bank_name)}</span></td>
+                <td class="py-3 px-4"><span class="px-2 py-1 ${tx.bank_name === CASH_NAME ? 'bg-amber-100 text-amber-800' : 'bg-slate-100'} rounded text-xs font-medium">${esc(tx.bank_name)}</span>
+                    ${tx.account_key ? `<div class="text-xs text-slate-500 mt-1">${esc(tx.account_key)}</div>` : ''}
+                    ${tx.import_id ? `<a href="/upload?import_id=${tx.import_id}" class="block text-xs text-emerald-700 mt-1">Выписка #${tx.import_id}</a>` : ''}
+                    ${tx.external_id ? `<div class="text-xs text-slate-500 mt-1">№ ${esc(tx.external_id)}</div>` : ''}</td>
                 <td class="py-3 px-4 max-w-md truncate" title="${esc(tx.description)}">${esc(tx.description)}</td>
                 <td class="py-3 px-4 whitespace-nowrap text-right ${amtColor}">${amtSign}${tx.amount.toLocaleString('ru-RU')} ₽</td>
                 <td class="py-3 px-4">

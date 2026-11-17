@@ -59,11 +59,12 @@ def test_main_menu_and_period_buttons():
     assert keyboard.resize_keyboard and keyboard.is_persistent
     for kind in ('finance','health'):
         callbacks={b.callback_data for row in get_period_kb(kind).inline_keyboard for b in row}
-        assert {f'report:{kind}:{p}' for p in ('day','month','year','custom')}<=callbacks
+        assert {f'report:{kind}:{p}' for p in ('day','week','month','year','custom')}<=callbacks
 
 
 def test_period_boundaries_leap_year_and_calendar_month():
     assert reporting.report_period('day',DAY)==(DAY,DAY)
+    assert reporting.report_period('week',DAY)==(date(2026,11,9),date(2026,11,15))
     assert reporting.report_period('month',DAY)==(date(2026,11,1),DAY)
     assert reporting.report_period('year',date(2024,2,29))==(date(2024,1,1),date(2024,2,29))
     assert reporting.parse_custom_period('01.11.2026 - 16.11.2026')==(date(2026,11,1),DAY)
@@ -223,3 +224,28 @@ async def test_duplicate_report_is_not_generated(store,monkeypatch):
         generator.assert_not_called()
         assert 'еще готовится' in message.answer.call_args.args[0]
     finally:reports._busy_users.discard(actor.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('period',['day','week','month','year'])
+async def test_health_period_callback_generates_same_photo_report(period,state,store,monkeypatch):
+    sender=AsyncMock()
+    monkeypatch.setattr(reports,'send_report',sender)
+    monkeypatch.setattr(reports,'report_period',lambda p: reporting.report_period(p,DAY))
+    await reports.choose_period(callback('report:health:'+period),state,store)
+    assert sender.call_args.args[1].id==2
+    assert sender.call_args.args[3:] == ('health',*reporting.report_period(period,DAY))
+
+
+@pytest.mark.asyncio
+async def test_health_report_sends_image_with_personal_summary(store,monkeypatch):
+    actor=await store.get(User,2)
+    data=await reporting.build_report_data(store,actor,'health',date(2026,11,9),date(2026,11,15))
+    monkeypatch.setattr(reports,'build_report_data',AsyncMock(return_value=data))
+    generator=AsyncMock(return_value=b'PNG')
+    monkeypatch.setattr(reports,'take_dashboard_screenshot',generator)
+    message=SimpleNamespace(answer=AsyncMock(),answer_photo=AsyncMock())
+    await reports.send_report(message,actor,store,'health',date(2026,11,9),date(2026,11,15))
+    assert generator.call_args.args[3]=='health'
+    text=message.answer_photo.call_args.kwargs['caption']+'\n'+'\n'.join(c.args[0] for c in message.answer.call_args_list)
+    assert 'Здоровье' in text and 'Вика' in text and 'Шаги' in text

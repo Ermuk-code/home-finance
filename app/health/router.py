@@ -186,6 +186,7 @@ async def list_activity(
             "date": a.date.isoformat(),
             "steps": a.steps,
             "active_calories": a.active_calories,
+            "total_calories": float(a.total_calories) if a.total_calories is not None else None,
         }
         for a in (await session.execute(stmt)).scalars().all()
     ]
@@ -252,13 +253,14 @@ async def activity_webhook(
     x_webhook_token: Optional[str] = Header(default=None),
     session: AsyncSession = Depends(get_async_session),
 ) -> Dict[str, Any]:
-    """Home Assistant присылает накопительные шаги и активные ккал за текущий день."""
+    """Накопительные шаги, активные и/или общие ккал за текущий день; типы не смешиваются."""
     _check_webhook_token(x_webhook_token)
     user = await _resolve_profile(session, payload.profile_alias)
-    log = await upsert_activity(session, user.id, local_today(), payload.steps, payload.active_calories)
+    log = await upsert_activity(session, user.id, local_today(), payload.steps, payload.active_calories, payload.total_calories)
     return {
         "status": "ok", "id": log.id, "user_id": log.user_id, "date": log.date.isoformat(),
         "steps": log.steps, "active_calories": log.active_calories,
+        "total_calories": float(log.total_calories) if log.total_calories is not None else None,
     }
 
 

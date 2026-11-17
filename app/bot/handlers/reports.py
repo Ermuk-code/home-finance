@@ -32,12 +32,14 @@ async def finance_menu(message: Message, state: FSMContext):
 
 
 @router.message(F.text == BTN_HEALTH)
+@router.message(Command('health_report'))
 async def health_menu(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer('⚖️ Здоровье и питание: выберите период или показатель.',reply_markup=get_period_kb('health'))
+    await message.answer('⚖️ Отчет здоровья с графиками: выберите период.\n'
+                         'Отдельные показатели и питание за сегодня доступны ниже.',reply_markup=get_period_kb('health'))
 
 
-async def send_report(message: Message, user, session: AsyncSession, kind, start, end):
+async def send_report(message: Message, user, session: AsyncSession, kind, start, end, period=None):
     if user.id in _busy_users:
         await message.answer('Предыдущий отчет еще готовится. Дождитесь результата.')
         return
@@ -45,7 +47,7 @@ async def send_report(message: Message, user, session: AsyncSession, kind, start
     try:
         await message.answer('⏳ Собираю данные и генерирую графики…')
         try:
-            data = await build_report_data(session,user,kind,start,end)
+            data = await build_report_data(session,user,kind,start,end,period=period or ('day' if start==end else 'custom'))
         except Exception as exc:
             logger.warning('Report query failed user_id=%s error=%s',user.id,type(exc).__name__)
             await message.answer('Не удалось получить данные отчета. Попробуйте позже.')
@@ -58,7 +60,9 @@ async def send_report(message: Message, user, session: AsyncSession, kind, start
         except Exception as exc:  # Browser failures must not hide the text report.
             logger.warning('Report image failed user_id=%s error=%s',user.id,type(exc).__name__)
         if photo:
-            caption = text if len(text) <= 1000 else f'Отчет Life OS · {start} — {end}. Подробности следующим сообщением.'
+            header='\n'.join(text.splitlines()[:2])
+            short_caption=(header+'\nПолная сводка — следующим сообщением.') if len(header)<=900 else f'Отчет Life OS · {start} — {end}.'
+            caption = text if len(text) <= 1000 else short_caption
             try:
                 await message.answer_photo(BufferedInputFile(photo,'dashboard.png'),caption=caption,parse_mode='HTML')
                 if len(text) <= 1000:
@@ -86,7 +90,7 @@ async def choose_period(callback: CallbackQuery, state: FSMContext, session: Asy
         await callback.answer('Откройте меню в чате с ботом.',show_alert=True)
         return
     parts=(callback.data or '').split(':')
-    if len(parts)!=3 or parts[1] not in ('finance','health') or parts[2] not in ('day','month','year','custom'):
+    if len(parts)!=3 or parts[1] not in ('finance','health') or parts[2] not in ('day','week','month','year','custom'):
         await callback.answer('Неизвестный период',show_alert=True)
         return
     _,kind,period=parts
@@ -99,7 +103,7 @@ async def choose_period(callback: CallbackQuery, state: FSMContext, session: Asy
         return
     user=await get_or_create_user(session,callback.from_user.id)
     start,end=report_period(period)
-    await send_report(callback.message,user,session,kind,start,end)
+    await send_report(callback.message,user,session,kind,start,end,period=period)
 
 
 @router.message(StateFilter(ReportState.waiting_for_custom_dates),F.text,
@@ -118,7 +122,7 @@ async def custom_dates(message: Message, state: FSMContext, session: AsyncSessio
         return
     user=await get_or_create_user(session,message.from_user.id)
     await state.clear()
-    await send_report(message,user,session,kind,start,end)
+    await send_report(message,user,session,kind,start,end,period='custom')
 
 
 @router.callback_query(F.data.startswith('menu:'))

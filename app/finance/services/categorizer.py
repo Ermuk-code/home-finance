@@ -1,11 +1,10 @@
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Category, Transaction, Vacation
-from app.finance.services.parser import ParsedTransaction
 
 TRANSFER_CATEGORY_NAMES = {
     "Переводы и Сбережения (Исходящие)",
@@ -211,7 +210,7 @@ LEGACY_RENAME_MAP = {
 }
 
 
-async def seed_default_categories(session: AsyncSession) -> None:
+async def seed_default_categories(session: AsyncSession, *, commit: bool = True) -> None:
     """Синхронизирует таблицу categories с эталонным списком из 15 категорий."""
     result = await session.execute(select(Category))
     existing_cats = list(result.scalars().all())
@@ -254,7 +253,7 @@ async def seed_default_categories(session: AsyncSession) -> None:
                     changed = True
             cat_obj.keywords = current_kw
 
-    if changed:
+    if changed and commit:
         await session.commit()
 
 
@@ -401,75 +400,3 @@ async def learn_from_correction(
         "learned_keyword": keyword,
         "similar_transactions_updated": auto_updated_count,
     }
-
-
-async def save_parsed_transactions(
-    session: AsyncSession, user_id: int, parsed_items: List[ParsedTransaction]
-) -> Tuple[int, int, int]:
-    """
-    Категоризирует и сохраняет транзакции в БД.
-    Включает проектный перехват отпусков: если расход совершен в даты отпуска,
-    назначается категория «Путешествия» (кроме обязательных платежей и переводов).
-    """
-    await seed_default_categories(session)
-
-    cat_result = await session.execute(select(Category))
-    categories = list(cat_result.scalars().all())
-    travel_cat = next((c for c in categories if c.name == "Путешествия"), None)
-
-    # Загружаем все периоды отпусков пользователя
-    vac_result = await session.execute(select(Vacation).where(Vacation.user_id == user_id))
-    user_vacations = list(vac_result.scalars().all())
-
-    existing_res = await session.execute(
-        select(Transaction.date, Transaction.amount, Transaction.bank_name, Transaction.description)
-        .where(Transaction.user_id == user_id)
-    )
-    existing_signatures = {
-        (row.date.replace(tzinfo=None), row.amount, row.bank_name, row.description[:40])
-        for row in existing_res.all()
-    }
-
-    saved_count = 0
-    categorized_count = 0
-    skipped_duplicates = 0
-
-    for item in parsed_items:
-        sig = (item.date.replace(tzinfo=None), item.amount, item.bank_name, item.description[:40])
-        if sig in existing_signatures:
-            skipped_duplicates += 1
-            continue
-
-        existing_signatures.add(sig)
-
-        is_income = item.amount > 0
-        matched_cat = match_category(item.description, is_income, categories)
-
-        # Умный перехват отпуска (только для расходов)
-        if not is_income and travel_cat and user_vacations and _is_date_in_vacations(item.date, user_vacations):
-            # Исключение: если операция распознана как обязательная (ЖКХ, Связь, Подписки)
-            # или это внутренний перевод — оставляем базовую категорию
-            is_mandatory_match = matched_cat is not None and matched_cat.is_mandatory
-            is_transfer_match = matched_cat is not None and matched_cat.name in TRANSFER_CATEGORY_NAMES
-            if not (is_mandatory_match or is_transfer_match):
-                matched_cat = travel_cat
-
-        category_id = matched_cat.id if matched_cat else None
-        is_auto = category_id is not None
-        if is_auto:
-            categorized_count += 1
-
-        tx = Transaction(
-            user_id=user_id,
-            category_id=category_id,
-            amount=item.amount,
-            description=item.description,
-            date=item.date,
-            bank_name=item.bank_name,
-            is_parsed_automatically=is_auto,
-        )
-        session.add(tx)
-        saved_count += 1
-
-    await session.commit()
-    return saved_count, categorized_count, skipped_duplicates

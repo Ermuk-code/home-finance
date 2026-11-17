@@ -1,5 +1,6 @@
 """Суточная активность из HA и персональные вечерние напоминания."""
 from datetime import date, datetime
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -18,18 +19,22 @@ def local_today() -> date:
 
 
 async def upsert_activity(
-    session: AsyncSession, user_id: int, day: date, steps: int, active_calories: int
+    session: AsyncSession, user_id: int, day: date, steps: int, active_calories: int,
+    total_calories: Decimal | None = None,
 ) -> ActivityLog:
     """Атомарный UPSERT: повторы и запоздалые меньшие показания не уменьшают итог."""
     stmt = pg_insert(ActivityLog).values(
-        user_id=user_id, date=day, steps=steps, active_calories=active_calories
+        user_id=user_id, date=day, steps=steps, active_calories=active_calories, total_calories=total_calories
     )
+    updates = {
+        "steps": func.greatest(ActivityLog.steps, stmt.excluded.steps),
+        "active_calories": func.greatest(ActivityLog.active_calories, stmt.excluded.active_calories),
+    }
+    if total_calories is not None:
+        updates["total_calories"] = func.greatest(func.coalesce(ActivityLog.total_calories, 0), stmt.excluded.total_calories)
     stmt = stmt.on_conflict_do_update(
         index_elements=["user_id", "date"],
-        set_={
-            "steps": func.greatest(ActivityLog.steps, stmt.excluded.steps),
-            "active_calories": func.greatest(ActivityLog.active_calories, stmt.excluded.active_calories),
-        },
+        set_=updates,
     ).returning(ActivityLog)
     log = (await session.execute(stmt, execution_options={"populate_existing": True})).scalar_one()
     await session.commit()

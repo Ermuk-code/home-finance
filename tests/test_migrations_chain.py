@@ -20,7 +20,7 @@ def test_single_head_and_linear_chain():
     parents = [p for p in revs.values() if p]
     assert len(parents) == len(set(parents)), "у одной ревизии несколько потомков (ветвление)"
     heads = [r for r in revs if r not in parents]
-    assert heads == ["8d9b2a5f1e43"]
+    assert heads == ["a1f4c8d2e690"]
     roots = [r for r, p in revs.items() if p is None]
     assert len(roots) == 1
     # цепочка проходит через все ревизии

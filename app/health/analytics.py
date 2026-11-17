@@ -43,11 +43,16 @@ def calculate_day(user, day, weight, nutrition, activity, today):
         bmr = calculate_bmr(weight_kg, user.height_cm, age, user.gender)
     eaten = nutrition.calories if nutrition else None
     active = activity.active_calories if activity else None
+    total = float(activity.total_calories) if activity and activity.total_calories is not None else None
     tef = eaten * 0.1 if eaten is not None else None
     tdee = bmr + active + tef if bmr is not None and active is not None and tef is not None else None
-    balance = eaten - tdee if tdee is not None else None
+    # Итог устройства уже содержит базовый обмен. Не добавляем ни BMR, ни TEF повторно.
+    if total is not None:
+        tdee = total
+    balance = eaten - tdee if tdee is not None and eaten is not None else None
     # Старый контракт активности использует 0 также для отсутствующего источника ккал.
     uncertain_activity = active == 0
+    uncertain_expenditure = total is None and (activity is None or uncertain_activity)
     return {
         "date": day.isoformat(), "age": age, "weight_kg": weight_kg,
         "height_cm": float(user.height_cm) if user.height_cm else None,
@@ -56,13 +61,16 @@ def calculate_day(user, day, weight, nutrition, activity, today):
         "carbs": float(nutrition.carbs) if nutrition else None,
         "weight_at": weight.timestamp.isoformat() if weight else None,
         "steps": activity.steps if activity else None, "calories": eaten, "active_calories": active,
+        "total_calories": total,
+        "expenditure_source": "device_total" if total is not None else "bmr_active_tef" if tdee is not None else None,
+        "expenditure_uncertain": uncertain_expenditure,
         "bmr": round(bmr, 2) if bmr is not None else None,
         "tef": round(tef, 2) if tef is not None else None,
         "tdee": round(tdee, 2) if tdee is not None else None,
         "balance": round(balance, 2) if balance is not None else None,
         "missing": missing, "activity_calories_uncertain": uncertain_activity,
         "is_partial": day >= today,
-        "complete": not missing and not uncertain_activity and day < today,
+        "complete": not missing and not uncertain_expenditure and day < today,
     }
 
 

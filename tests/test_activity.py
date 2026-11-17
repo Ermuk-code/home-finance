@@ -4,6 +4,7 @@ SQLite исполняет тот же ON CONFLICT; greatest зарегистри
 Это не заменяет приемку на целевом PostgreSQL и реальных устройствах.
 """
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -129,6 +130,22 @@ async def test_webhook_authentication(client, token, expected):
 
 
 @pytest.mark.asyncio
+async def test_total_energy_precision_retries_and_legacy_sender(client, store):
+    async def total(value):
+        return await client.post('/api/health/webhook/activity', headers={'X-Webhook-Token': 'activity-test'},
+                                 json={'profile_alias': 'admin', 'steps': 6202, 'total_calories': value})
+    first = await total(1850.72)
+    assert first.status_code == 200 and first.json()['total_calories'] == 1850.72
+    assert first.json()['active_calories'] == 0
+    assert (await total(1800)).json()['total_calories'] == 1850.72
+    assert (await total(1850.72)).json()['id'] == first.json()['id']
+    # An old sender without total energy must not erase the new source.
+    assert (await post(client, steps=7000, calories=0)).json()['total_calories'] == 1850.72
+    assert store.session.scalar(select(ActivityLog)).total_calories == Decimal('1850.72')
+    assert store.session.scalar(select(func.count(ActivityLog.id))) == 1
+
+
+@pytest.mark.asyncio
 async def test_webhook_disabled_and_profiles(client, store, monkeypatch):
     monkeypatch.setattr(health.settings, "HEALTH_WEBHOOK_TOKEN", None)
     assert (await post(client)).status_code == 503
@@ -143,6 +160,8 @@ async def test_webhook_disabled_and_profiles(client, store, monkeypatch):
 @pytest.mark.parametrize("change", [
     {"steps": -1}, {"steps": 3.5}, {"steps": True}, {"steps": "unknown"},
     {"steps": 2147483648}, {"active_calories": -1}, {"active_calories": None},
+    {"total_calories": -1}, {"total_calories": "NaN"}, {"total_calories": 1850.721},
+    {"total_calories": True}, {"total_calories": 2147483648},
     {"profile_alias": "  "}, {"profile_alias": "x" * 101},
 ])
 async def test_invalid_payload_does_not_write(client, store, change):

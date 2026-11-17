@@ -125,6 +125,7 @@ async def dashboard(start_date: Optional[date] = Query(default=None), end_date: 
     def local_day(ts):
         return (ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts).astimezone(tz).date()
     return {'profile': serialize_profile(user), 'summary': summary, 'plan': plan,
+            'today': planning_summary['days'][-1],
             'measurements': [{'date': m.date.isoformat(), 'height_cm': float(m.height_cm) if m.height_cm else None,
                               'waist_cm': float(m.waist_cm) if m.waist_cm else None}
                              for m in measurements if start <= m.date <= end],

@@ -9,7 +9,7 @@ def get_period_kb(report_type: str = 'finance') -> InlineKeyboardMarkup:
     if report_type not in ('finance','health'):
         raise ValueError('Неизвестный отчет')
     rows = [[InlineKeyboardButton(text=label,callback_data=f'report:{report_type}:{period}')]
-            for label,period in [('За сегодня','day'),('За месяц','month'),('За год','year'),('Выбрать период','custom')]]
+            for label,period in [('За сегодня','day'),('За неделю','week'),('За месяц','month'),('За год','year'),('Выбрать период','custom')]]
     if report_type == 'finance':
         rows += [[action_button('💵 Наличные','cash'),action_button('＋ Операция','add')],
                  [action_button('🎯 Лимиты','limits'),action_button('✏️ Задать лимит','set_limit')],

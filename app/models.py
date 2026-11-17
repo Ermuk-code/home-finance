@@ -11,6 +11,8 @@ from app.finance.models import (
     Deposit,
     IncomeRule,
     Reminder,
+    StatementImport,
+    StatementImportRow,
     Transaction,
     Vacation,
 )
@@ -18,7 +20,7 @@ from app.health.models import ActivityLog, BodyMeasurement, DailyNutrition, Heal
 
 __all__ = [
     "ROLE_ADMIN", "ROLE_USER", "ROLES", "User",
-    "Asset", "Category", "CategoryLimit", "Deposit", "IncomeRule", "Reminder", "Transaction", "Vacation",
+    "Asset", "Category", "CategoryLimit", "Deposit", "IncomeRule", "Reminder", "StatementImport", "StatementImportRow", "Transaction", "Vacation",
     "ActivityLog", "BodyMeasurement", "DailyNutrition", "WeightLog", "HealthMetric",
     "Workout", "WorkoutExercise",
 ]

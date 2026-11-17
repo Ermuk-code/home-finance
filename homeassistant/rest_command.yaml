@@ -23,5 +23,10 @@ rest_command:
     headers:
       X-Webhook-Token: !secret life_os_webhook_token
     payload: >-
-      {{ {"profile_alias": profile, "steps": steps | int,
-          "active_calories": calories | default(0) | int(0)} | to_json }}
+      {% set data = {"profile_alias": profile, "steps": steps | int} %}
+      {% if calories_type | default('active') == 'total' %}
+        {{ dict(data, total_calories=calories | float | round(2)) | to_json
+           if calories is defined and is_number(calories) else data | to_json }}
+      {% else %}
+        {{ dict(data, active_calories=calories | default(0) | int(0)) | to_json }}
+      {% endif %}

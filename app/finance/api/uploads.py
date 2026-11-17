@@ -1,19 +1,77 @@
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from pydantic import BaseModel, Field
+from typing import Literal
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_async_session
-from app.core.security import get_current_user
-from app.models import ROLE_ADMIN, User
+from app.core.security import DataScope, get_current_user, get_scope
+from app.models import ROLE_ADMIN, StatementImport, User
 from app.finance.services.broker_parser import BrokerParserError, BrokerReportParser, sync_parsed_assets
-from app.finance.services.categorizer import save_parsed_transactions
 from app.finance.services.parser import BankStatementParser, StatementParserError
+from app.finance.services.statement_imports import (
+    MAX_UPLOAD_BYTES, ImportErrorBase, commit_import, preview_import, revert_import, stage_import, summary,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["Uploads"])
+
+
+class ImportConfirmation(BaseModel):
+    revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    choices: Dict[int, Literal["add", "skip"]] = Field(default_factory=dict)
+
+
+async def _scoped_import(session: AsyncSession, scope: DataScope, import_id: int) -> StatementImport:
+    batch = (await session.execute(scope.apply(select(StatementImport).where(
+        StatementImport.id == import_id), StatementImport))).scalar_one_or_none()
+    if batch is None:
+        raise HTTPException(404, "Загрузка не найдена.")
+    return batch
+
+
+@router.get("/imports")
+async def list_imports(scope: DataScope = Depends(get_scope), session: AsyncSession = Depends(get_async_session),
+                       limit: int = Query(default=30, ge=1, le=100), offset: int = Query(default=0, ge=0)):
+    batches = (await session.execute(scope.apply(select(StatementImport), StatementImport)
+        .order_by(StatementImport.id.desc()).limit(limit).offset(offset))).scalars().all()
+    return [summary(batch) for batch in batches]
+
+
+@router.get("/imports/{import_id}")
+async def get_import(import_id: int, scope: DataScope = Depends(get_scope),
+                     session: AsyncSession = Depends(get_async_session)):
+    batch = await _scoped_import(session, scope, import_id)
+    try:
+        return await preview_import(session, batch)
+    except ImportErrorBase as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+@router.post("/imports/{import_id}/confirm")
+async def confirm_import(import_id: int, payload: ImportConfirmation, scope: DataScope = Depends(get_scope),
+                         session: AsyncSession = Depends(get_async_session)):
+    batch = await _scoped_import(session, scope, import_id)
+    try:
+        return await commit_import(session, batch.id, batch.user_id, payload.revision, payload.choices)
+    except ImportErrorBase as exc:
+        await session.rollback()
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+@router.post("/imports/{import_id}/revert")
+async def undo_import(import_id: int, scope: DataScope = Depends(get_scope),
+                      session: AsyncSession = Depends(get_async_session)):
+    batch = await _scoped_import(session, scope, import_id)
+    try:
+        return await revert_import(session, batch.id, batch.user_id)
+    except ImportErrorBase as exc:
+        await session.rollback()
+        raise HTTPException(exc.status_code, str(exc)) from exc
 
 
 async def _resolve_target_user(session: AsyncSession, current_user: User, user_id: Optional[int] = None) -> User:
@@ -33,15 +91,19 @@ async def upload_financial_file(
     file: UploadFile = File(...),
     user_id: Optional[int] = Form(default=None),
     bank_hint: Optional[str] = Form(default=None),
+    account_key: str = Form(default="", max_length=100),
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_async_session),
 ) -> Dict[str, Any]:
     """
     Принимает файл выписки или брокерского отчета (PDF, CSV, XLSX).
-    Автоматически распознает тип документа и сохраняет данные в БД.
+    Банковская выписка сначала создаёт предпросмотр; сохранение — отдельным подтверждением.
+    Брокерские отчёты сохраняются сразу, как раньше.
     """
     filename = file.filename or "uploaded_file"
-    file_bytes = await file.read()
+    file_bytes = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Максимальный размер файла — 20 МБ.")
 
     if not file_bytes:
         raise HTTPException(
@@ -54,25 +116,17 @@ async def upload_financial_file(
     # 1. Пытаемся распарсить как банковскую выписку (Сбер, Альфа-Банк, Т-Банк)
     try:
         parsed_txs = await BankStatementParser.parse_file_async(file_bytes, filename, bank_hint)
-        if parsed_txs:
-            saved_count, categorized_count, skipped_dups = await save_parsed_transactions(
-                session, target_user.id, parsed_txs
-            )
-            return {
-                "status": "ok",
-                "file_type": "bank_statement",
-                "bank_name": parsed_txs[0].bank_name,
-                "filename": filename,
-                "total_found": len(parsed_txs),
-                "saved_new": saved_count,
-                "categorized_automatically": categorized_count,
-                "uncategorized": saved_count - categorized_count,
-                "skipped_duplicates": skipped_dups,
-            }
     except StatementParserError as e:
         logger.info("Файл %s не подошел под банковскую выписку (%s), пробуем брокерский парсер.", filename, e)
-    except Exception as e:
-        logger.warning("Ошибка при попытке банковского парсинга %s: %s", filename, e)
+        parsed_txs = []
+
+    if parsed_txs:
+        try:
+            batch = await stage_import(session, target_user.id, filename, file_bytes, parsed_txs, account_key)
+            return await preview_import(session, batch)
+        except ImportErrorBase as exc:
+            await session.rollback()
+            raise HTTPException(exc.status_code, str(exc)) from exc
 
     # 2. Пытаемся распарсить как брокерский отчет (CSV, XLSX, PDF)
     try:
