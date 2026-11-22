@@ -1,11 +1,16 @@
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import Message
 from sqlalchemy import delete, func, select
 
 from app.health import workouts as service
+from app.health.schemas import WorkoutRead
 from app.models import Workout, WorkoutExercise
 from tests import test_health_analytics as fixtures
 from tests.test_activity import auth
@@ -141,20 +146,21 @@ async def test_morning_personalized_once_skip_completed_and_failed_send(api,stor
     await api.patch(f'/api/health/workouts/{completed["id"]}/complete',headers=auth(3))
     await create(api,day=DAY-timedelta(days=1))
     sent=[]
-    async def send(chat_id,text):
-        sent.append((chat_id,text))
+    async def send(chat_id,text,*,reply_markup):
+        sent.append((chat_id,text,reply_markup))
         return chat_id!=222
     monkeypatch.setattr(service,'local_today',lambda:DAY)
     monkeypatch.setattr(service,'async_session_maker',lambda:store)
     monkeypatch.setattr(service,'send_telegram_message',send)
     await service.send_morning_workout_plan()
-    assert [chat for chat,_ in sent]==[111,222]
+    assert [chat for chat,_,_ in sent]==[111,222]
     assert '&lt;Ноги &amp; спина&gt;' in sent[0][1] and '3 × 10-12' in sent[0][1]
+    assert sent[0][2].inline_keyboard[0][1].callback_data == f'workout:move:{first["id"]}:{DAY}'
     assert store.session.get(Workout,first['id']).morning_notified_on==DAY
     assert store.session.get(Workout,partner['id']).morning_notified_on is None
     sent.clear()
     await service.send_morning_workout_plan()
-    assert [chat for chat,_ in sent]==[222]
+    assert [chat for chat,_,_ in sent]==[222]
 
 
 @pytest.mark.asyncio
@@ -166,7 +172,8 @@ async def test_bot_today_plan_inline_button_and_callback_privacy(api,store,monke
     message=SimpleNamespace(from_user=SimpleNamespace(id=222),answer=AsyncMock())
     await bot.cmd_workout(message,store)
     markup=message.answer.call_args.kwargs['reply_markup']
-    assert markup.inline_keyboard[0][0].callback_data==f'workout:done:{own["id"]}'
+    assert markup.inline_keyboard[0][0].callback_data==f'workout:done:{own["id"]}:{DAY}'
+    assert markup.inline_keyboard[0][1].callback_data==f'workout:move:{own["id"]}:{DAY}'
     callback=SimpleNamespace(from_user=SimpleNamespace(id=222),data=f'workout:done:{other["id"]}',
                              answer=AsyncMock(),message=None)
     await bot.done_callback(callback,store)
@@ -184,6 +191,108 @@ async def test_bot_today_plan_inline_button_and_callback_privacy(api,store,monke
     message.from_user.id=333
     await bot.cmd_workout(message,store)
     assert 'На сегодня тренировок не запланировано' in message.answer.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_bot_reschedules_missed_workout_and_rejects_old_buttons(api, store, monkeypatch):
+    from app.bot.handlers import workouts as bot
+
+    yesterday = DAY - timedelta(days=1)
+    own = await create(api, user_id=2, day=yesterday, title='<Ноги & спина>')
+    other = await create(api, day=yesterday)
+    completed = await create(api, user_id=2, day=yesterday)
+    await api.patch(f'/api/health/workouts/{completed["id"]}/complete', headers=auth(2))
+    monkeypatch.setattr(service, 'local_today', lambda: DAY)
+    monkeypatch.setattr(bot, 'local_today', lambda: DAY)
+    state = FSMContext(MemoryStorage(), StorageKey(bot_id=123, chat_id=222, user_id=222))
+    user = SimpleNamespace(id=222)
+    message = Mock(spec=Message, from_user=user, answer=AsyncMock(), edit_text=AsyncMock())
+
+    await bot.cmd_workout(message, store, state)
+    markup = message.answer.call_args.kwargs['reply_markup']
+    callback = SimpleNamespace(from_user=user, data=markup.inline_keyboard[0][0].callback_data,
+                               answer=AsyncMock(), message=message)
+    await bot.missed_callback(callback, store)
+    rows = message.edit_text.call_args.kwargs['reply_markup'].inline_keyboard
+    assert len(rows) == 1
+    assert rows[0][0].callback_data == f'workout:move:{own["id"]}:{yesterday}'
+
+    for workout_id in (other['id'], completed['id']):
+        callback.data = f'workout:move:{workout_id}:{yesterday}'
+        await bot.start_reschedule(callback, store, state)
+        assert callback.answer.call_args.kwargs['show_alert'] is True
+        assert await state.get_state() is None
+
+    callback.data = rows[0][0].callback_data
+    await bot.start_reschedule(callback, store, state)
+    assert '&lt;Ноги &amp; спина&gt;' in message.answer.call_args.args[0]
+    date_buttons = message.answer.call_args.kwargs['reply_markup'].inline_keyboard[0]
+    assert [button.text for button in date_buttons] == ['Сегодня', 'Завтра']
+
+    for invalid in ('31.02.2027', '15.11.2026'):
+        message.text = invalid
+        await bot.reschedule_date_message(message, store, state)
+        assert await state.get_state() == bot.WorkoutReschedule.new_date.state
+        assert store.session.get(Workout, own['id']).date == yesterday
+
+    callback.data = date_buttons[0].callback_data
+    await bot.reschedule_date_callback(callback, store, state)
+    assert await state.get_state() is None
+    assert '16.11.2026' in message.answer.call_args.args[0]
+    rows = (await api.get('/api/health/workouts', headers=auth(2))).json()
+    assert [(row['id'], row['date']) for row in rows] == [(own['id'], DAY.isoformat())]
+    assert WorkoutRead.model_validate(rows[0]).exercises == WorkoutRead.model_validate(own).exercises
+
+    await bot.reschedule_date_callback(callback, store, state)
+    assert callback.answer.call_args.kwargs['show_alert'] is True
+    callback.data = f'workout:done:{own["id"]}:{yesterday}'
+    await bot.done_callback(callback, store)
+    assert callback.answer.call_args.kwargs['show_alert'] is True
+    assert not store.session.get(Workout, own['id']).is_completed
+
+
+@pytest.mark.asyncio
+async def test_custom_reschedule_moves_reminder_and_checks_latest_status(api, store, monkeypatch):
+    from app.bot.handlers import workouts as bot
+
+    today = DAY
+    monkeypatch.setattr(service, 'local_today', lambda: today)
+    monkeypatch.setattr(bot, 'local_today', lambda: today)
+    monkeypatch.setattr(service, 'async_session_maker', lambda: store)
+    send = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, 'send_telegram_message', send)
+    own = await create(api)
+    await service.send_morning_workout_plan()
+    button = send.call_args.kwargs['reply_markup'].inline_keyboard[0][1]
+    user = SimpleNamespace(id=111)
+    message = Mock(spec=Message, from_user=user, answer=AsyncMock(), text='19.11.2026')
+    callback = SimpleNamespace(from_user=user, data=button.callback_data, answer=AsyncMock(), message=message)
+    state = FSMContext(MemoryStorage(), StorageKey(bot_id=123, chat_id=111, user_id=111))
+
+    await bot.start_reschedule(callback, store, state)
+    assert [button.text for button in message.answer.call_args.kwargs['reply_markup'].inline_keyboard[0]] == ['Завтра']
+    await bot.cancel_reschedule(message, state)
+    assert await state.get_state() is None
+    assert store.session.get(Workout, own['id']).date == DAY
+    await bot.start_reschedule(callback, store, state)
+    await bot.reschedule_date_message(message, store, state)
+    new_date = date(2026, 11, 19)
+    workout = store.session.get(Workout, own['id'])
+    assert workout.date == new_date and workout.morning_notified_on == DAY
+
+    await service.send_morning_workout_plan()
+    assert send.await_count == 1
+    today = new_date
+    await service.send_morning_workout_plan()
+    assert send.await_count == 2
+    assert '19.11.2026' in send.call_args.args[1]
+    callback.data = send.call_args.kwargs['reply_markup'].inline_keyboard[0][1].callback_data
+    await bot.start_reschedule(callback, store, state)
+    await api.patch(f'/api/health/workouts/{own["id"]}/complete', headers=auth(1))
+    message.text = '20.11.2026'
+    await bot.reschedule_date_message(message, store, state)
+    assert 'изменилась или недоступна' in message.answer.call_args.args[0]
+    assert workout.date == new_date and workout.is_completed
 
 
 @pytest.mark.asyncio

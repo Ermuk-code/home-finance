@@ -3,12 +3,15 @@ import asyncio
 import logging
 from typing import Optional
 
+from aiogram.types import InlineKeyboardMarkup
+
 logger = logging.getLogger(__name__)
 
 SEND_TIMEOUT_SEC = 10
 
 
-async def send_telegram_message(telegram_id: Optional[int], text: str, parse_mode: Optional[str] = "HTML") -> bool:
+async def send_telegram_message(telegram_id: Optional[int], text: str, parse_mode: Optional[str] = "HTML",
+                                *, reply_markup: InlineKeyboardMarkup | None = None) -> bool:
     """Отправляет text в личный чат telegram_id. Никогда не бросает исключений.
 
     Возвращает True, если Telegram принял сообщение. Ошибка доставки (бот заблокирован, нет сети,
@@ -21,7 +24,7 @@ async def send_telegram_message(telegram_id: Optional[int], text: str, parse_mod
 
     try:
         await asyncio.wait_for(
-            bot.send_message(telegram_id, text, parse_mode=parse_mode),
+            bot.send_message(telegram_id, text, parse_mode=parse_mode, reply_markup=reply_markup),
             timeout=SEND_TIMEOUT_SEC,
         )
         return True

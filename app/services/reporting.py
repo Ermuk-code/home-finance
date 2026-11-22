@@ -12,7 +12,7 @@ from app.finance.services.reports import fmt_money, summarize_transactions
 from app.health.activity import local_today
 from app.health.analytics import HealthAnalytics
 from app.models import Category, Transaction, User
-from app.services.health_report_text import aggregate_health, format_health_lines, previous_period
+from app.services.health_report_text import aggregate_health, format_health_lines, previous_period, reported_expenditure
 
 
 def validate_period(start: date, end: date) -> None:
@@ -57,6 +57,8 @@ async def build_report_data(session: AsyncSession, user: User, kind: str, start:
     if kind == 'health':
         service=HealthAnalytics(session)
         result['health'] = await service.get_summary(user.id, start, end)
+        for day in result['health']['days']:
+            day['reported_expenditure'] = reported_expenditure(day)
         mode=('day' if start==end else 'custom') if period in (None,'custom') else period
         if mode not in ('day','week','month','year','custom'):
             raise ValueError('Неизвестный период отчета.')

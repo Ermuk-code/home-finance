@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -212,6 +213,47 @@ async def test_image_delivery_fallback_and_caption_limits(store,monkeypatch):
     message.answer_photo.side_effect=TelegramAPIError(method=SimpleNamespace(),message='failed')
     await reports.send_report(message,actor,store,'finance',DAY,DAY)
     assert actor.id not in reports._busy_users
+
+
+@pytest.mark.asyncio
+async def test_summary_arrives_before_render_and_photo_upload(store,monkeypatch):
+    expected='Готовая текстовая сводка'
+    monkeypatch.setattr(reports,'build_report_data',AsyncMock(return_value=report_data()))
+    monkeypatch.setattr(reports,'format_period_summary',lambda _: expected)
+    events=[]
+    async def answer(text,**kwargs):
+        if text==expected:
+            events.append('summary')
+    async def render(*args,**kwargs):
+        assert events==['summary']
+        events.append('render')
+        return b'PNG'
+    async def photo(*args,**kwargs):
+        assert events==['summary','render']
+        events.append('upload')
+    monkeypatch.setattr(reports,'take_dashboard_screenshot',render)
+    message=SimpleNamespace(answer=AsyncMock(side_effect=answer),answer_photo=AsyncMock(side_effect=photo))
+    await reports.send_report(message,await store.get(User,2),store,'finance',DAY,DAY)
+    assert events==['summary','render','upload']
+    assert sum(c.args[0]==expected for c in message.answer.call_args_list)==1
+
+
+@pytest.mark.asyncio
+async def test_stalled_photo_is_bounded_and_summary_is_already_available(store,monkeypatch,caplog):
+    monkeypatch.setattr(reports,'build_report_data',AsyncMock(return_value=report_data()))
+    monkeypatch.setattr(reports,'format_period_summary',lambda _: 'Готовая сводка')
+    monkeypatch.setattr(reports,'take_dashboard_screenshot',AsyncMock(return_value=b'PNG'))
+    monkeypatch.setattr(reports,'REPORT_PHOTO_TIMEOUT_SEC',0.01)
+    message=SimpleNamespace(answer=AsyncMock())
+    async def stalled_photo(*args,**kwargs):
+        assert any(c.args[0]=='Готовая сводка' for c in message.answer.call_args_list)
+        await asyncio.Event().wait()
+    message.answer_photo=AsyncMock(side_effect=stalled_photo)
+    actor=await store.get(User,2)
+    await asyncio.wait_for(reports.send_report(message,actor,store,'finance',DAY,DAY),timeout=1)
+    assert actor.id not in reports._busy_users
+    assert 'Текстовая сводка уже отправлена' in message.answer.call_args.args[0]
+    assert 'error=TimeoutError' in caplog.text
 
 
 @pytest.mark.asyncio

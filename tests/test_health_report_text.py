@@ -31,12 +31,13 @@ def context(current,previous=None,period='day'):
 
 
 def test_daily_values_previous_day_deltas_and_kbju():
-    current=summary(day(weight_kg=79.5,steps=9000,tdee=2600,calories=2150,protein=120,fat=65,carbs=260,is_partial=True))
+    current=summary(day(weight_kg=79.5,steps=9000,tdee=2600,active_calories=600,calories=2150,protein=120,fat=65,carbs=260,is_partial=True))
     previous=summary(day('2026-11-15'))
     text='\n'.join(format_health_lines(context(current,previous)))
     assert '79,50 кг' in text and '80,00 кг' in text and 'Δ −0,50 кг' in text
     assert '9 000 шагов' in text and 'Δ +1 000 шагов' in text
-    assert 'Расход калорий за день' in text and 'Δ +100 ккал' in text
+    assert 'Расход калорий за день: <b>600 ккал</b> (пред. день: 500 ккал; Δ +100 ккал)' in text
+    assert 'Активные калории' not in text
     assert 'Потреблено калорий за день' in text and 'Δ +150 ккал' in text
     assert 'Белки' in text and 'Δ +20,0 г' in text and 'Углеводы' in text
 
@@ -45,6 +46,35 @@ def test_device_total_in_report_without_active_calories():
     values = aggregate_health(summary(day(tdee=1850.72, total_calories=1850.72, active_calories=0,
                                          activity_calories_uncertain=True, expenditure_uncertain=False)), 'day')
     assert values['tdee'] == 1850.72 and values['active_calories'] is None
+    assert values['reported_expenditure'] == 1850.72
+
+
+def test_legacy_received_calories_replace_modelled_tdee_in_daily_report():
+    current = summary(day(tdee=3677, active_calories=1850))
+    previous = summary(day('2026-11-15', tdee=3877.5, active_calories=2044))
+    text = '\n'.join(format_health_lines(context(current, previous)))
+    assert 'Расход калорий за день: <b>1 850 ккал</b> (пред. день: 2 044 ккал; Δ −194 ккал)' in text
+    assert '3 677' not in text and 'Активные калории' not in text
+
+
+@pytest.mark.parametrize('period,expected', [('month', 2350.72), ('year', 1175.36), ('week', 1175.36)])
+def test_reported_expense_aggregates_mixed_sources_per_day(period, expected):
+    data = summary(day('2026-11-14', total_calories=1850.72, active_calories=100),
+                   day('2026-11-15', active_calories=500),
+                   day(active_calories=None, tdee=1827))
+    values = aggregate_health(data, period)
+    assert values['reported_expenditure'] == expected
+    assert values['sample_days']['reported_expenditure'] == 2
+
+
+def test_reported_expense_does_not_fall_back_to_bmr_when_source_unknown():
+    for value in (None, 0):
+        data = summary(day(active_calories=value, activity_calories_uncertain=True, tdee=1827))
+        result = aggregate_health(data, 'day')
+        assert result['reported_expenditure'] is None
+        assert result['sample_days']['reported_expenditure'] == 0
+    total_zero = aggregate_health(summary(day(total_calories=0, active_calories=500)), 'day')
+    assert total_zero['reported_expenditure'] == 0
 
 
 def test_missing_values_and_real_zero_not_invented_delta():
@@ -112,3 +142,25 @@ async def test_custom_single_day_has_daily_comparison(api,store):
     user=await store.get(User,2)
     data=await build_report_data(store,user,'health',date(2026,11,16),date(2026,11,16),period='custom')
     assert data['health_text']['period']=='day' and data['health_text']['previous_start']=='2026-11-15'
+
+
+@pytest.mark.asyncio
+async def test_text_and_image_use_received_expense_without_changing_analytics(api,store):
+    user=await store.get(User,1)
+    user.gender,user.height_cm,user.birth_date='male',184,date(1996,1,1)
+    store.session.add(WeightLog(user_id=1,weight_kg=82.2,timestamp=datetime(2026,11,14,12,tzinfo=timezone.utc)))
+    store.session.add(ActivityLog(user_id=1,date=date(2026,11,15),steps=6202,active_calories=1850))
+    store.session.add(DailyNutrition(user_id=1,date=date(2026,11,15),calories=0))
+    store.session.commit()
+    data=await build_report_data(store,user,'health',date(2026,11,15),date(2026,11,15),period='day')
+    assert data['health']['days'][0]['tdee']==3677
+    assert data['health']['days'][0]['reported_expenditure']==1850
+    assert data['health_text']['current']['reported_expenditure']==1850
+    assert 'Расход калорий за день: <b>1 850 ккал</b>' in format_period_summary(data)
+    from app.services.screenshot import create_render_token
+    token=create_render_token(user.id,date(2026,11,15),date(2026,11,15),'health')
+    response=await api.get('/dashboard-render',params={'start_date':'2026-11-15','end_date':'2026-11-15','report_type':'health'},
+                           headers={'Authorization':'Bearer '+token})
+    assert response.status_code==200
+    assert '<span>Расход, ккал/день</span><strong>1 850</strong>' in response.text
+    assert 'data:days.map(x=>x.reported_expenditure)' in response.text

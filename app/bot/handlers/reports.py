@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from time import perf_counter
 
 from aiogram import F, Router
 from aiogram.filters import Command, StateFilter
@@ -18,6 +20,7 @@ from app.services.screenshot import create_render_token, take_dashboard_screensh
 logger = logging.getLogger(__name__)
 router = Router(name='period_reports_router')
 _busy_users: set[int] = set()
+REPORT_PHOTO_TIMEOUT_SEC = 15
 
 
 class ReportState(StatesGroup):
@@ -45,6 +48,7 @@ async def send_report(message: Message, user, session: AsyncSession, kind, start
         return
     _busy_users.add(user.id)
     try:
+        started = perf_counter()
         await message.answer('⏳ Собираю данные и генерирую графики…')
         try:
             data = await build_report_data(session,user,kind,start,end,period=period or ('day' if start==end else 'custom'))
@@ -53,23 +57,32 @@ async def send_report(message: Message, user, session: AsyncSession, kind, start
             await message.answer('Не удалось получить данные отчета. Попробуйте позже.')
             return
         text = format_period_summary(data)
+        logger.info('Report data ready user_id=%s kind=%s elapsed_ms=%.0f', user.id, kind,
+                    (perf_counter()-started)*1000)
+        # Сводка доступна сразу: генерация и загрузка картинки не задерживают текст.
+        await message.answer(text,parse_mode='HTML')
         photo = None
+        render_started = perf_counter()
         try:
             token = create_render_token(user.id,start,end,kind)
             photo = await take_dashboard_screenshot(start,end,token,kind)
         except Exception as exc:  # Browser failures must not hide the text report.
             logger.warning('Report image failed user_id=%s error=%s',user.id,type(exc).__name__)
+        logger.info('Report image ready user_id=%s kind=%s elapsed_ms=%.0f bytes=%s', user.id, kind,
+                    (perf_counter()-render_started)*1000, len(photo) if photo else 0)
         if photo:
             header='\n'.join(text.splitlines()[:2])
-            short_caption=(header+'\nПолная сводка — следующим сообщением.') if len(header)<=900 else f'Отчет Life OS · {start} — {end}.'
-            caption = text if len(text) <= 1000 else short_caption
+            caption = header if len(header)<=900 else f'Отчет Life OS · {start} — {end}.'
+            delivery_started = perf_counter()
             try:
-                await message.answer_photo(BufferedInputFile(photo,'dashboard.png'),caption=caption,parse_mode='HTML')
-                if len(text) <= 1000:
-                    return
-            except TelegramAPIError:
-                logger.warning('Report photo delivery failed user_id=%s',user.id)
-        await message.answer(text,parse_mode='HTML')
+                async with asyncio.timeout(REPORT_PHOTO_TIMEOUT_SEC):
+                    await message.answer_photo(BufferedInputFile(photo,'dashboard.png'),caption=caption,parse_mode='HTML')
+                logger.info('Report photo delivered user_id=%s kind=%s elapsed_ms=%.0f', user.id, kind,
+                            (perf_counter()-delivery_started)*1000)
+            except (TelegramAPIError, TimeoutError) as exc:
+                logger.warning('Report photo delivery failed user_id=%s error=%s elapsed_ms=%.0f',
+                               user.id,type(exc).__name__,(perf_counter()-delivery_started)*1000)
+                await message.answer('Не удалось отправить график. Текстовая сводка уже отправлена выше.')
         if photo is None:
             await message.answer('График временно недоступен. Текстовая сводка выше содержит доступные данные.')
     finally:

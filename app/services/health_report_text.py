@@ -5,7 +5,20 @@ from statistics import mean
 from zoneinfo import ZoneInfo
 
 
-METRICS = ('weight_kg','steps','tdee','active_calories','calories','protein','fat','carbs')
+METRICS = ('weight_kg','steps','tdee','active_calories','reported_expenditure','calories','protein','fat','carbs')
+
+
+def reported_expenditure(day: dict):
+    """Калории из HA для отчёта: общий итог, иначе прежнее поле активных ккал.
+
+    Не подставляем модельный TDEE: старые отправители могли записать общий расход
+    в active_calories, поэтому прибавление BMR в отображении удваивало его.
+    """
+    if day.get('total_calories') is not None:
+        return day['total_calories']
+    if day.get('activity_calories_uncertain'):
+        return None
+    return day.get('active_calories')
 
 
 def measurement_day(timestamp, tz):
@@ -46,7 +59,9 @@ def aggregate_health(summary: dict, period: str) -> dict:
             tz=ZoneInfo(summary['timezone'])
             eligible=[d for d in days if d.get('weight_at') and
                       measurement_day(d['weight_at'],tz).isoformat()==d['date']]
-        values=[d[key] for d in eligible if d.get(key) is not None]
+        values=([reported_expenditure(d) for d in eligible] if key=='reported_expenditure'
+                else [d.get(key) for d in eligible])
+        values=[v for v in values if v is not None]
         counts[key]=len(values)
         if not values:
             result[key]=None
@@ -89,8 +104,7 @@ def format_health_lines(context: dict) -> list[str]:
     lines=[
         metric_line(weight,'weight_kg','кг',context,2,'⚖️ '),
         metric_line('Шаги '+suffix,'steps','шагов',context,prefix='👣 '),
-        metric_line('Расход калорий '+suffix,'tdee','ккал',context,prefix='🔥 '),
-        metric_line('Активные калории '+suffix,'active_calories','ккал',context),
+        metric_line('Расход калорий '+suffix,'reported_expenditure','ккал',context,prefix='🔥 '),
         metric_line('Потреблено калорий '+suffix,'calories','ккал',context,prefix='🍽 '),
         '🥗 <b>КБЖУ '+suffix+':</b>',
     ]
@@ -106,6 +120,6 @@ def format_health_lines(context: dict) -> list[str]:
         day=measurement_day(context['current']['weight_at'],ZoneInfo(context['timezone'])).strftime('%d.%m.%Y')
         lines.append(f'Последний замер веса: {day}.')
     counts=context['current']['sample_days']
-    lines.append(f'Дней с данными: шаги — {counts["steps"]}, расход — {counts["tdee"]}, питание — {counts["calories"]}.')
-    lines.append('Расход: общий итог HA, если он передан; иначе BMR за 24 часа + активные ккал + 10% питания. К общему итогу HA базовый обмен повторно не прибавляется. Нет данных — не ноль.')
+    lines.append(f'Дней с данными: шаги — {counts["steps"]}, расход — {counts["reported_expenditure"]}, питание — {counts["calories"]}.')
+    lines.append('Расход — калории из Home Assistant: общий итог, если он передан, иначе значение прежнего поля активности. Базовый обмен дополнительно не прибавляется. Нет данных — не ноль.')
     return lines

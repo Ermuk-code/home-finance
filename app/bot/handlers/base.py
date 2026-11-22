@@ -69,7 +69,7 @@ async def cmd_start_help(message: Message, session: AsyncSession, state: FSMCont
         "• /activity — Шаги и активные калории за сегодня\n"
         "• /stats — Отчет здоровья за 7 завершенных дней\n"
         "• /abs_forecast — Условная дата достижения целевого процента жира\n"
-        "• /workout — План тренировок на сегодня и отметка выполнения\n"
+        "• /workout — Тренировки на сегодня, отметка выполнения и перенос пропущенных тренировок\n"
         "• /link_fatsecret — Привязать FatSecret (питание)\n"
         "• /nutrition — КБЖУ за сегодня\n"
         "• /unlink_fatsecret — Отвязать FatSecret\n"
