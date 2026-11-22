@@ -189,10 +189,6 @@ async def add_manual_transaction(
                 raise ManualTxError("Тип категории не совпадает с типом операции.")
         else:
             category = match_category(text, kind == KIND_INCOME, categories)
-            # match_category при отсутствии совпадения по типу берёт любую категорию — для ручного
-            # ввода это путаница (расход в «Зарплате»), поэтому такие совпадения отбрасываем.
-            if category is not None and category.type != kind:
-                category = None
 
     tx = Transaction(
         user_id=user_id,
@@ -216,8 +212,6 @@ async def guess_category(
     await seed_default_categories(session)
     categories = list((await session.execute(select(Category))).scalars().all())
     matched = match_category(description, kind == KIND_INCOME, categories)
-    if matched is not None and matched.type != kind:
-        matched = None
     same_type = sorted((c for c in categories if c.type == kind), key=lambda c: c.name)
     return matched, same_type
 

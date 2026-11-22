@@ -1,4 +1,5 @@
 import logging
+from html import escape
 from typing import Optional
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -53,14 +54,15 @@ async def _fetch_next_uncategorized(
 def _format_tx_for_learning(tx: Transaction) -> str:
     sign = "+" if tx.amount > 0 else ""
     suggested_kw = extract_smart_keyword(tx.description)
+    keyword_hint = f"🔑 Ключевое слово: <code>{escape(suggested_kw)}</code>\n\n" if suggested_kw else ""
     return (
         "🧐 <b>Нераспознанная операция:</b>\n\n"
         f"📅 Дата: <b>{tx.date.strftime('%d.%m.%Y %H:%M')}</b>\n"
         f"🏦 Банк: <b>{tx.bank_name}</b>\n"
         f"💰 Сумма: <b>{sign}{tx.amount} ₽</b>\n"
-        f"📝 Описание: <code>{tx.description}</code>\n"
-        f"🔑 Ключевое слово для запоминания: <code>{suggested_kw}</code>\n\n"
-        "👇 <b>Выберите подходящую категорию</b> (парсер запомнит её для всех будущих выписок):"
+        f"📝 Описание: <code>{escape(tx.description)}</code>\n\n"
+        f"{keyword_hint}"
+        "👇 <b>Выберите подходящую категорию</b>:"
     )
 
 
@@ -156,12 +158,13 @@ async def cb_learn_category(callback: CallbackQuery, session: AsyncSession) -> N
         await callback.answer(f"Ошибка сохранения: {e}", show_alert=True)
         return
 
-    summary_header = (
-        f"✅ Категория изменена на <b>«{learn_res['new_category_name']}»</b>.\n"
-        f"🧠 Запомнено слово: <code>{learn_res['learned_keyword']}</code>\n"
-        f"🔄 Автоматически обновлено похожих операций: <b>{learn_res['similar_transactions_updated']}</b>\n"
-        "────────────────────\n"
-    )
+    summary_header = f"✅ Категория изменена на <b>«{escape(learn_res['new_category_name'])}»</b>.\n"
+    if keyword := learn_res["learned_keyword"]:
+        summary_header += (
+            f"🧠 Запомнено слово: <code>{escape(keyword)}</code>\n"
+            f"🔄 Автоматически обновлено похожих операций: <b>{learn_res['similar_transactions_updated']}</b>\n"
+        )
+    summary_header += "────────────────────\n"
 
     next_tx = await _fetch_next_uncategorized(session, user.id)
 

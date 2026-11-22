@@ -262,7 +262,7 @@ async def commit_import(session: AsyncSession, import_id: int, user_id: int, exp
             row.transaction_id = p.candidates[0].id if p.candidates else None
             row.outcome = "duplicate" if p.action == "duplicate" else "skipped"
         else:
-            category = match_category(row.description, row.amount > 0, categories)
+            category = match_category(row.description, row.amount > 0, categories, bank_name=row.bank_name)
             if row.amount < 0 and travel and _is_date_in_vacations(row.date, vacations):
                 if not category or not (category.is_mandatory or category.name in TRANSFER_CATEGORY_NAMES):
                     category = travel

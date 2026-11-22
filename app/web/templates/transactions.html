@@ -248,7 +248,10 @@
             if (!resp.ok) throw new Error(data.detail || 'Ошибка сохранения');
 
             const d = data.details;
-            showToast(`Категория: «${d.new_category_name}» | Запомнено: "${d.learned_keyword}" | Обновлено похожих: ${d.similar_transactions_updated}`);
+            const learning = data.learned
+                ? ` | Запомнено: "${d.learned_keyword}" | Обновлено похожих: ${d.similar_transactions_updated}`
+                : '';
+            showToast(`Категория: «${d.new_category_name}»${learning}`);
             await loadTransactions();
         } catch (err) {
             showToast(err.message, 'error');

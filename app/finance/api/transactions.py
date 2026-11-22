@@ -243,7 +243,7 @@ async def update_transaction_category(
             )
             return {
                 "status": "ok",
-                "learned": True,
+                "learned": bool(learn_result["learned_keyword"]),
                 "details": learn_result,
             }
         except ValueError as e:

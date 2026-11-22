@@ -104,6 +104,43 @@ async def confirm(store, batch, choices=None):
 
 
 @pytest.mark.asyncio
+async def test_import_categorizes_by_bank_and_direction(store):
+    incoming = parsed('Перевод с карты АО Т-Банк. Операция по карте ****0000')
+    incoming.amount = Decimal('100')
+    outgoing = parsed('Перевод СБП Т-Банк. Операция по карте ****0000')
+    unspecified = parsed('Оплата по QR–коду СБП Незнакомый продавец')
+    result = await confirm(store, await stage(store, [incoming, outgoing, unspecified]))
+
+    assert result['categorized_automatically'] == 2
+    rows = store.session.scalars(select(Transaction).order_by(Transaction.id)).all()
+    assert [row.category.name if row.category else None for row in rows] == [
+        'Переводы и Пополнения (Входящие)', 'Переводы и Сбережения (Исходящие)', None,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_learning_updates_similar_auto_rows_but_preserves_manual_choices(api, store):
+    owner_rows = [parsed(f'Оплата в PAPA LEPIT {terminal}') for terminal in (1000, 2000, 3000)]
+    await confirm(store, await stage(store, owner_rows))
+    await confirm(store, await stage(store, [parsed('Оплата в PAPA LEPIT 4000')], user_id=2))
+    corrected, automatic, manual, partner = store.session.scalars(select(Transaction).order_by(Transaction.id)).all()
+    cafe_id = corrected.category_id
+    groceries = store.session.scalar(select(Category).where(Category.name == 'Супермаркеты и продукты'))
+    manual.is_parsed_automatically = False
+    store.session.commit()
+
+    response = await api.patch(
+        f'/api/transactions/{corrected.id}', headers=auth(), json={'category_id': groceries.id}
+    )
+
+    assert response.status_code == 200
+    assert response.json()['details']['similar_transactions_updated'] == 1
+    assert not corrected.is_parsed_automatically and corrected.category_id == groceries.id
+    assert automatic.is_parsed_automatically and automatic.category_id == groceries.id
+    assert manual.category_id == partner.category_id == cafe_id
+
+
+@pytest.mark.asyncio
 async def test_distinct_suffixes_and_identical_purchases_are_all_saved(store):
     rows = [parsed('A' * 40 + ' one'), parsed('A' * 40 + ' two'), parsed(), parsed()]
     batch = await stage(store, rows)
