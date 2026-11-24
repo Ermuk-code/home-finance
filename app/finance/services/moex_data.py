@@ -167,12 +167,14 @@ async def fetch_dividends(client, secid: str) -> List[DividendPayment]:
 
 async def fetch_instruments(items: List[Dict[str, str]]) -> Dict[str, InstrumentData]:
     """items: [{"ticker": ..., "asset_type": "bond|stock|fund"}] -> {TICKER: InstrumentData}."""
-    import httpx  # локальный импорт: чистые парсеры выше не требуют httpx
+    import httpx  # локальные импорты: чистые парсеры выше не требуют httpx
+
+    from app.finance.services.moex_http import create_moex_client
 
     result: Dict[str, InstrumentData] = {}
     if not items:
         return result
-    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
+    async with create_moex_client(httpx.Timeout(10.0, connect=5.0)) as client:
 
         async def one(item: Dict[str, str]) -> Tuple[str, InstrumentData]:
             ticker = item["ticker"].strip().upper()

@@ -77,6 +77,58 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 Версии библиотек закреплены в `requirements.txt`. Чтобы обновить: поднять версию, прогнать `pytest`, пересобрать образ.
 
+### Сертификат для MOEX ISS
+
+Если запросы к `iss.moex.com` завершаются ошибкой проверки цепочки с `Russian Trusted Root CA`, скачайте корневой
+сертификат НУЦ Минцифры по ссылке из [инструкции Московской биржи](https://www.moex.com/kak-sohranit-dostup-k-servisam-birzhi).
+Перенесите его в LXC как `/tmp/russian_trusted_root_ca.cer` и сохраните в отдельном каталоге в формате PEM:
+
+```bash
+if openssl x509 -in /tmp/russian_trusted_root_ca.cer -out /tmp/moex-root.pem ||
+   openssl x509 -inform DER -in /tmp/russian_trusted_root_ca.cer -out /tmp/moex-root.pem; then
+  sudo install -D -m 0644 /tmp/moex-root.pem /etc/lifeos/tls/moex-root.pem
+fi
+```
+
+В каталоге с `docker-compose.yml` добавьте настройки сервиса `app` в локальный `docker-compose.override.yml`:
+
+```yaml
+services:
+  app:
+    environment:
+      MOEX_CA_FILE: /run/lifeos/moex-root.pem
+    volumes:
+      - /etc/lifeos/tls/moex-root.pem:/run/lifeos/moex-root.pem:ro
+```
+
+`MOEX_CA_FILE` добавляет сертификат к стандартному набору доверенных CA только для запросов котировок и выплат
+к MOEX ISS. TLS-клиент Telegram использует свои настройки. Если ранее задавали `SSL_CERT_FILE` для решения проблемы
+с MOEX, удалите эту настройку из сервиса или его `.env`.
+
+После обновления кода пересоберите и запустите только `app`, затем проверьте запрос к MOEX:
+
+```bash
+docker compose up -d --build --no-deps app
+docker compose exec -T app python - <<'PY'
+import asyncio
+import httpx
+from app.finance.services.moex_http import create_moex_client
+
+async def main():
+    async with create_moex_client(httpx.Timeout(10.0)) as client:
+        base = "https://iss.moex.com/iss"
+        for path in (
+            "engines/stock/markets/bonds/securities/SU26236RMFS8.json",
+            "statistics/engines/stock/markets/bonds/bondization/SU26236RMFS8.json",
+        ):
+            response = await client.get(f"{base}/{path}")
+            response.raise_for_status()
+            print(response.status_code, path)
+
+asyncio.run(main())
+PY
+```
+
 ## 5. Бэкапы
 
 Сервис `backup` в `docker-compose.yml` (скрипт [`scripts/backup.sh`](../scripts/backup.sh)) раз в сутки делает

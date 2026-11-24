@@ -5,6 +5,8 @@ from typing import Dict, List, Optional
 
 import httpx
 
+from app.finance.services.moex_http import create_moex_client
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,7 +33,7 @@ class MoexClient:
 
         own_client = client is None
         if own_client:
-            client = httpx.AsyncClient(timeout=cls.TIMEOUT)
+            client = create_moex_client(cls.TIMEOUT)
 
         try:
             is_bond = (
@@ -178,7 +180,7 @@ class MoexClient:
             return {}
 
         results: Dict[str, Optional[Decimal]] = {}
-        async with httpx.AsyncClient(timeout=cls.TIMEOUT) as client:
+        async with create_moex_client(cls.TIMEOUT) as client:
             tasks = {
                 item["ticker"].strip().upper(): cls.get_current_price(
                     ticker=item["ticker"],
